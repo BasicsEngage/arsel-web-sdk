@@ -11,10 +11,6 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # Holds the whole job for a human approval before anything runs. npm has no
-    # staging state and no usable undo — a published version is permanent and its
-    # number can never be reused — so this is the only place a release can be
-    # stopped after the tag but before it is irreversible.
     environment: release
     steps:
       - uses: actions/checkout@v4
