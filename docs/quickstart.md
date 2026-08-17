@@ -21,14 +21,14 @@ are matched exactly — `https://shop.example.com` does not cover `https://www.s
 ## 1. Install
 
 ```bash
-npm install @arsel/web-sdk
+npm install @arsel.sa/web-sdk
 ```
 
 <details>
 <summary>No bundler? Use the UMD build.</summary>
 
 unpkg and jsDelivr serve it from npm — pin the version and add an SRI hash, or copy
-`node_modules/@arsel/web-sdk/dist/arsel.umd.cjs` into your own static assets and serve it yourself:
+`node_modules/@arsel.sa/web-sdk/dist/arsel.umd.cjs` into your own static assets and serve it yourself:
 
 ```html
 <script src="/js/arsel.umd.cjs"></script>
@@ -47,7 +47,7 @@ and written to the durable queue the moment `init()` supplies the configuration 
 page-lifetime only, so the earlier you initialize, the less you have at risk.
 
 ```js
-import Arsel from '@arsel/web-sdk';
+import Arsel from '@arsel.sa/web-sdk';
 
 await Arsel.init({
   clientKey: 'pub_…',
@@ -85,10 +85,10 @@ registers no worker at all.**
 Copy the worker from the package to your web **root** as `/arsel-sw.js`:
 
 ```bash
-cp node_modules/@arsel/web-sdk/sw/arsel-sw.js public/arsel-sw.js
+cp node_modules/@arsel.sa/web-sdk/sw/arsel-sw.js public/arsel-sw.js
 ```
 
-(The file is also exported as `@arsel/web-sdk/sw` for build tooling. A hosted CDN URL you can
+(The file is also exported as `@arsel.sa/web-sdk/sw` for build tooling. A hosted CDN URL you can
 `importScripts()` instead may come later; self-hosting is the supported path today.)
 
 It has to be at the root. Service worker scope is a browser rule, not ours: a worker served from

@@ -1,5 +1,5 @@
 {
-  "name": "@arsel/web-sdk",
+  "name": "@arsel.sa/web-sdk",
   "version": "1.0.0",
   "description": "Arsel web SDK — events, identity and web push.",
   "license": "MIT",

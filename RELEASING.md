@@ -1,4 +1,4 @@
-# Releasing `@arsel/web-sdk`
+# Releasing `@arsel.sa/web-sdk`
 
 A release is a git tag. Pushing `vX.Y.Z` runs `.github/workflows/release.yml`: typecheck, tests,
 build, `npm publish`, and a GitHub release with the matching CHANGELOG section as notes. No tag,
@@ -6,11 +6,20 @@ no publish.
 
 ## One-time setup (blocks the first publish)
 
-1. **npm scope.** Create the `arsel` organization on npmjs.com (Add Organization → `arsel`) — it
-   owns the `@arsel/*` scope.
+1. **npm scope.** The `arsel.sa` organization on npmjs.com owns the `@arsel.sa/*` scope. (`arsel`
+   was already taken; `@arsel.sa` also mirrors the Android `sa.arsel` namespace.)
 2. **Token.** In npm: Access Tokens → Generate New Token → **Granular**, permission
-   *Read and write* scoped to the `@arsel/web-sdk` package (or the `arsel` org before the package
-   exists). Not a classic token.
+   *Read and write* scoped to the `@arsel.sa/web-sdk` package (or the `arsel.sa` org before the
+   package exists). Not a classic token — and **enable "Bypass 2FA"**, or the publish fails with
+   `403 ... Two-factor authentication or granular access token with bypass 2fa enabled is
+   required`. Verify before wiring it up:
+
+   ```bash
+   curl -s -H "Authorization: Bearer $TOKEN" https://registry.npmjs.org/-/npm/v1/tokens
+   ```
+
+   The token's entry must show `"bypass_2fa": true`. Mind the `expiry` too — an expiring token
+   breaks CI silently months later.
 3. **Secret.** In this GitHub repo: Settings → Secrets and variables → Actions → new secret
    `NPM_TOKEN` with that value.
 

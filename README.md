@@ -3,7 +3,7 @@
 Events, identity and web push for the browser. ~4 kB gzipped, no dependencies, ESM + UMD.
 
 ```js
-import Arsel from '@arsel/web-sdk';
+import Arsel from '@arsel.sa/web-sdk';
 
 await Arsel.init({ clientKey: 'pub_…', baseUrl: 'https://api.arsel.sa' });
 
@@ -46,7 +46,7 @@ Push has a narrower support surface than events; see the matrix in
 ## Install
 
 ```bash
-npm install @arsel/web-sdk
+npm install @arsel.sa/web-sdk
 ```
 
 Or from a script tag, which exposes the same surface on `window.Arsel`. unpkg and jsDelivr serve the
@@ -55,12 +55,12 @@ UMD build straight from npm — **pin the version**, and add an
 compromised CDN cannot run arbitrary script on your pages:
 
 ```html
-<script src="https://unpkg.com/@arsel/web-sdk@1.0.0/dist/arsel.umd.cjs"
+<script src="https://unpkg.com/@arsel.sa/web-sdk@1.0.0/dist/arsel.umd.cjs"
         integrity="sha384-…" crossorigin="anonymous"></script>
 <script>Arsel.init({ clientKey: 'pub_…', baseUrl: 'https://api.arsel.sa' })</script>
 ```
 
-Or skip the third party altogether: copy `node_modules/@arsel/web-sdk/dist/arsel.umd.cjs` into your
+Or skip the third party altogether: copy `node_modules/@arsel.sa/web-sdk/dist/arsel.umd.cjs` into your
 static assets and serve it from your own origin.
 
 For push, also add **one file** to your site — see

@@ -116,7 +116,7 @@ SDK registers nothing and only the events API runs. Then:
 curl -I https://yoursite.com/arsel-sw.js
 ```
 
-- **404** — the file isn't deployed. Copy `node_modules/@arsel/web-sdk/sw/arsel-sw.js` into your
+- **404** — the file isn't deployed. Copy `node_modules/@arsel.sa/web-sdk/sw/arsel-sw.js` into your
   framework's static-assets directory.
 - **200 but `Content-Type: text/html`** — your SPA router is serving `index.html`. Exclude the path.
 - **A MIME type error in the console** — same cause as above.

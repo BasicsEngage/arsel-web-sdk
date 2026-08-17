@@ -1,8 +1,8 @@
 /**
  * Arsel service worker.
  *
- * Self-hosted: copy this file (exported as `@arsel/web-sdk/sw`, i.e.
- * `node_modules/@arsel/web-sdk/sw/arsel-sw.js`) to your web root as
+ * Self-hosted: copy this file (exported as `@arsel.sa/web-sdk/sw`, i.e.
+ * `node_modules/@arsel.sa/web-sdk/sw/arsel-sw.js`) to your web root as
  * `/arsel-sw.js`, or `importScripts()` it from your own service worker.
  *
  * It has to be served from the root because service worker scope is a browser

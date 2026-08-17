@@ -27,14 +27,14 @@ Copy the worker from the package to your web root and point `init()` at it — r
 opt-in, and without `serviceWorkerPath` the SDK registers nothing:
 
 ```bash
-cp node_modules/@arsel/web-sdk/sw/arsel-sw.js public/arsel-sw.js
+cp node_modules/@arsel.sa/web-sdk/sw/arsel-sw.js public/arsel-sw.js
 ```
 
 ```js
 await Arsel.init({ clientKey, baseUrl, serviceWorkerPath: '/arsel-sw.js' });
 ```
 
-(The file is also exported as `@arsel/web-sdk/sw`. Self-hosting is the supported path today; a
+(The file is also exported as `@arsel.sa/web-sdk/sw`. Self-hosting is the supported path today; a
 hosted CDN URL you can `importScripts()` may come later.)
 
 Root, because **service worker scope is a browser rule**: a worker served from `/js/` can only

@@ -3,8 +3,8 @@
 Every public method. The default export and the named exports are the same functions:
 
 ```js
-import Arsel from '@arsel/web-sdk';           // Arsel.track(…)
-import { track, identify } from '@arsel/web-sdk';
+import Arsel from '@arsel.sa/web-sdk';           // Arsel.track(…)
+import { track, identify } from '@arsel.sa/web-sdk';
 ```
 
 Under a script tag, the same surface is on `window.Arsel`.

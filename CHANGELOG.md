@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `@arsel/web-sdk`. Format follows [Keep a Changelog](https://keepachangelog.com/),
+All notable changes to `@arsel.sa/web-sdk`. Format follows [Keep a Changelog](https://keepachangelog.com/),
 versioning follows [Semantic Versioning](https://semver.org/).
 
 Breaking changes to the public surface wait for a major release, and are listed here explicitly.
