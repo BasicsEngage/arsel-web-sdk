@@ -1,0 +1,60 @@
+{
+  "name": "@arsel/web-sdk",
+  "version": "1.0.0",
+  "description": "Arsel web SDK — events, identity and web push.",
+  "license": "MIT",
+  "author": "Arsel (https://arsel.sa)",
+  "homepage": "https://github.com/BasicsEngage/arsel-web-sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BasicsEngage/arsel-web-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BasicsEngage/arsel-web-sdk/issues"
+  },
+  "keywords": [
+    "arsel",
+    "analytics",
+    "events",
+    "web-push",
+    "push-notifications",
+    "service-worker",
+    "sdk"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/arsel.umd.cjs",
+  "module": "./dist/arsel.js",
+  "types": "./dist/index.d.ts",
+  "unpkg": "./dist/arsel.umd.cjs",
+  "jsdelivr": "./dist/arsel.umd.cjs",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/arsel.js",
+      "require": "./dist/arsel.umd.cjs"
+    },
+    "./sw": "./sw/arsel-sw.js"
+  },
+  "files": [
+    "dist",
+    "sw",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "vite build && tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "fake-indexeddb": "^6.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.8"
+  }
+}
