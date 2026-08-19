@@ -30,6 +30,23 @@ export interface ArselConfig {
 
   /** Emit SDK diagnostics to the console. Off by default. */
   debug?: boolean;
+
+  /**
+   * In-app messaging. `true` (the default) registers this browser for in-app
+   * messages — which needs no notification permission and shows no prompt —
+   * and renders them. Pass `false` to disable, or an object to tune the layer.
+   */
+  inApp?: boolean | InAppOptions;
+}
+
+export interface InAppOptions {
+  /**
+   * Stacking context for the message host. Default 2147483000 — deliberately
+   * below the maximum, so a host site's own top-most modal still wins.
+   */
+  zIndex?: number;
+  /** Accessible label for the close control. Default `'Close'`. */
+  closeLabel?: string;
 }
 
 /** Identifiers accepted by {@link identify}. Supply whichever you hold. */
@@ -73,4 +90,10 @@ export interface ArselDiagnostics {
   lastResponseCode: number | null;
   lastResponsePath: string | null;
   lastResponseAtMs: number | null;
+  /** Messages currently cached for this device. */
+  inAppMessages: number;
+  inAppBundleVersion: string | null;
+  inAppFetchedAtMs: number | null;
+  /** Beacons persisted but not yet delivered. A number that only grows is the tell. */
+  pendingInAppBeacons: number;
 }

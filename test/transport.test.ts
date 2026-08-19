@@ -72,9 +72,14 @@ describe('getJson', () => {
     } as unknown as Response);
     vi.stubGlobal('fetch', fetchMock);
 
-    const body = await getJson<{ keyVersion: number }>('https://api.example.com', '/cfg');
+    // getJson now returns the same { result, code, body } envelope as post(),
+    // so the in-app bundle fetch can branch on 304 before classify() sees it.
+    const response = await getJson<{ keyVersion: number }>(
+      'https://api.example.com',
+      '/cfg',
+    );
 
-    expect(body?.keyVersion).toBe(1);
+    expect(response.body?.keyVersion).toBe(1);
     expect(fetchMock.mock.calls[0]![1].headers['X-Arsel-SDK']).toMatch(/^web\//);
   });
 });

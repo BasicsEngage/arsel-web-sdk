@@ -180,7 +180,10 @@ export async function subscribe(): Promise<boolean> {
   ]);
   if (!clientKey || !baseUrl || !isSupported()) return false;
 
-  const config = await getJson<WebPushConfig>(baseUrl, configPath(clientKey));
+  const { body: config } = await getJson<WebPushConfig>(
+    baseUrl,
+    configPath(clientKey),
+  );
   if (!config?.vapidPublicKey) return false;
 
   let registration: ServiceWorkerRegistration;
@@ -301,7 +304,10 @@ export async function reconcile(): Promise<void> {
   ]);
   if (!clientKey || !baseUrl) return;
 
-  const config = await getJson<WebPushConfig>(baseUrl, configPath(clientKey));
+  const { body: config } = await getJson<WebPushConfig>(
+    baseUrl,
+    configPath(clientKey),
+  );
   if (!config?.vapidPublicKey) return;
 
   let registration: ServiceWorkerRegistration;
@@ -340,4 +346,80 @@ export async function isSubscribed(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+
+/**
+ * Register this browser WITHOUT a push subscription.
+ *
+ * In-app messaging needs an `installationId` and a `deviceSecret` to
+ * authenticate its bundle fetch, and needs no notification permission at all.
+ * Gating that behind `promptForPush()` would restrict the whole channel to the
+ * minority who accept notifications — throwing away most of its reach.
+ *
+ * Deliberately does NOT prompt, subscribe, or touch the service worker. The
+ * refusal to prompt on load is what keeps an origin out of Chrome's abusive-
+ * notification heuristics, and this path must not become a back door to it.
+ *
+ * Single-flighted: `promptForPush()` racing `init()` must not post twice, which
+ * would mint a second `deviceSecret` and strand the first.
+ */
+export function registerDevice(): Promise<boolean> {
+  registerPromise ??= runRegisterDevice().finally(() => {
+    registerPromise = null;
+  });
+  return registerPromise;
+}
+
+let registerPromise: Promise<boolean> | null = null;
+
+async function runRegisterDevice(): Promise<boolean> {
+  const [clientKey, baseUrl, anon] = await Promise.all([
+    get<string>(KEYS.clientKey),
+    get<string>(KEYS.baseUrl),
+    anonymousId(),
+  ]);
+  if (!clientKey || !baseUrl) return false;
+
+  // Already registered by a push subscription: that path mints the same
+  // identifiers, and re-posting would be a pointless second write.
+  if (await get<string>(KEYS.deviceSecret)) return true;
+
+  let installationId = await get<string>(KEYS.installationId);
+  if (!installationId) {
+    installationId = crypto.randomUUID();
+    await set(KEYS.installationId, installationId);
+  }
+
+  const response = await post<{ deviceSecret?: string }>(
+    baseUrl,
+    subscriptionsPath(clientKey),
+    {
+      installationId,
+      platform: 'web',
+      anonymousId: anon,
+      // Truthful: no prompt has been shown. Reporting DENIED would mark the
+      // device unreachable for push it was never asked about.
+      enablementStatus: 'NOT_DETERMINED',
+      deviceTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      deviceLocale: navigator.language,
+    },
+  );
+
+  if (response.code === 403) {
+    // The one auth failure on this surface that is not the opaque 404, and the
+    // likeliest misconfiguration: an org whose allowedOrigins was never set
+    // rejects every visitor, because an empty allowlist matches nothing.
+    console.error(
+      `[arsel] this origin is not on the organization's allowed origins list — in-app messaging is disabled`,
+    );
+    return false;
+  }
+  if (response.result !== RESULT.success) return false;
+
+  // Issued exactly once, on the call that mints it.
+  if (response.body?.deviceSecret) {
+    await set(KEYS.deviceSecret, response.body.deviceSecret);
+  }
+  return true;
 }

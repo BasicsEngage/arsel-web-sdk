@@ -6,7 +6,14 @@ import {
   enqueue,
   flush,
 } from '../src/events';
-import { KEYS, allEvents, anonymousId, removeEvent, set } from '../src/store';
+import {
+  KEYS,
+  QUEUE,
+  allEvents,
+  anonymousId,
+  removeEvent,
+  set,
+} from '../src/store';
 
 const BASE_URL = 'https://api.example.com';
 const CLIENT_KEY = 'pub_test';
@@ -22,8 +29,8 @@ function mockFetch(status = 202, body: unknown = { id: 'log-1' }) {
 }
 
 async function clearEvents() {
-  for (const e of await allEvents()) {
-    if (e.id !== undefined) await removeEvent(e.id);
+  for (const e of await allEvents(QUEUE.events)) {
+    if (e.id !== undefined) await removeEvent(QUEUE.events, e.id);
   }
 }
 
@@ -159,7 +166,7 @@ describe('batching and idempotency', () => {
 
   it('sends several events as one { events: [...] } batch, in order', async () => {
     await enqueueOffline(['first', 'second', 'third']);
-    const rows = await allEvents();
+    const rows = await allEvents(QUEUE.events);
     const fetchMock = mockFetch();
 
     await flush();
@@ -177,12 +184,12 @@ describe('batching and idempotency', () => {
     expect(options.headers['Idempotency-Key']).toBe(
       `${rows[0]!.idempotencyKey}:${rows[2]!.idempotencyKey}:3`,
     );
-    expect(await allEvents()).toHaveLength(0);
+    expect(await allEvents(QUEUE.events)).toHaveLength(0);
   });
 
   it('a single event keeps the single-object body and its own key', async () => {
     await enqueueOffline(['only']);
-    const [row] = await allEvents();
+    const [row] = await allEvents(QUEUE.events);
     const fetchMock = mockFetch();
 
     await flush();
@@ -205,7 +212,7 @@ describe('batching and idempotency', () => {
     const second = JSON.parse(fetchMock.mock.calls[1]![1].body as string);
     expect(first.events).toHaveLength(MAX_BATCH);
     expect(second.events).toHaveLength(10);
-    expect(await allEvents()).toHaveLength(0);
+    expect(await allEvents(QUEUE.events)).toHaveLength(0);
   });
 
   it('retries the whole batch under the same idempotency key', async () => {
@@ -213,14 +220,14 @@ describe('batching and idempotency', () => {
 
     const failMock = mockFetch(503);
     await flush();
-    expect(await allEvents()).toHaveLength(2);
+    expect(await allEvents(QUEUE.events)).toHaveLength(2);
     const firstKey = failMock.mock.calls[0]![1].headers['Idempotency-Key'];
 
     const okMock = mockFetch(202);
     await flush();
 
     expect(okMock.mock.calls[0]![1].headers['Idempotency-Key']).toBe(firstKey);
-    expect(await allEvents()).toHaveLength(0);
+    expect(await allEvents(QUEUE.events)).toHaveLength(0);
   });
 });
 
@@ -241,7 +248,7 @@ describe('durability', () => {
     await enqueue('product.viewed', {});
     await flush();
 
-    expect(await allEvents()).toHaveLength(1);
+    expect(await allEvents(QUEUE.events)).toHaveLength(1);
   });
 
   it('keeps a retryable failure queued', async () => {
@@ -250,7 +257,7 @@ describe('durability', () => {
     await enqueue('product.viewed', {});
     await flush();
 
-    expect(await allEvents()).toHaveLength(1);
+    expect(await allEvents(QUEUE.events)).toHaveLength(1);
   });
 
   it('drops a permanent failure instead of blocking everything behind it', async () => {
@@ -260,7 +267,7 @@ describe('durability', () => {
     await enqueue('product.viewed', {});
     await flush();
 
-    expect(await allEvents()).toHaveLength(0);
+    expect(await allEvents(QUEUE.events)).toHaveLength(0);
   });
 
   it('logs loudly when a permanent failure takes identifiers with it', async () => {
@@ -271,7 +278,7 @@ describe('durability', () => {
     await enqueue('product.viewed', {});
     await flush();
 
-    expect(await allEvents()).toHaveLength(0);
+    expect(await allEvents(QUEUE.events)).toHaveLength(0);
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining('phone_number must be E.164'),
     );
@@ -304,7 +311,7 @@ describe('durability', () => {
     // First batch delivered, second failed and kept — a later batch never
     // overtakes an earlier one on the backend.
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(await allEvents()).toHaveLength(5);
+    expect(await allEvents(QUEUE.events)).toHaveLength(5);
   });
 });
 

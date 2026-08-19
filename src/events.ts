@@ -1,5 +1,6 @@
 import {
   KEYS,
+  QUEUE,
   addEvent,
   allEvents,
   anonymousId,
@@ -17,6 +18,8 @@ export const RESERVED_PREFIX = 'arsel.';
 export const EVENT_SESSION_START = `${RESERVED_PREFIX}session_start`;
 export const EVENT_SESSION_END = `${RESERVED_PREFIX}session_end`;
 export const EVENT_IDENTIFY = `${RESERVED_PREFIX}identify`;
+/** Screen views share one reserved name; the screen itself is a property. */
+export const SCREEN_EVENT = `${RESERVED_PREFIX}screen`;
 
 // Mirror `IngestEventDto`'s @Length caps, applied here so the 400 never happens.
 const MAX_EVENT_NAME = 80;
@@ -118,7 +121,7 @@ export async function enqueue(
   properties: EventProperties,
   timestampMs = Date.now(),
 ): Promise<void> {
-  await addEvent(await buildBody(name, properties, timestampMs), crypto.randomUUID());
+  await addEvent(QUEUE.events, await buildBody(name, properties, timestampMs), crypto.randomUUID());
   // Fire-and-forget: track() must not make the caller wait on the network.
   void flush().catch(() => {});
 }
@@ -180,7 +183,7 @@ async function drain(): Promise<void> {
   // Re-reads until the queue is empty: anything enqueued while we were on the
   // network would otherwise sit there until the next unrelated trigger.
   for (;;) {
-    const pending = await allEvents();
+    const pending = await allEvents(QUEUE.events);
     if (pending.length === 0) return;
 
     for (let i = 0; i < pending.length; i += MAX_BATCH) {
@@ -208,7 +211,7 @@ async function drain(): Promise<void> {
         reportPermanentDrop(items, response.code, response.body);
       }
       for (const event of batch) {
-        if (event.id !== undefined) await removeEvent(event.id);
+        if (event.id !== undefined) await removeEvent(QUEUE.events, event.id);
       }
     }
   }

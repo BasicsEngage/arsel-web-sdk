@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EVENT_SESSION_END, EVENT_SESSION_START } from '../src/events';
 import { SESSION_GAP_MS, onHidden, onVisible } from '../src/session';
-import { KEYS, allEvents, removeEvent, set } from '../src/store';
+import { KEYS, QUEUE, allEvents, removeEvent, set } from '../src/store';
 
 const START = 1_786_104_000_000;
 
 async function names(): Promise<string[]> {
-  return (await allEvents()).map((e) => JSON.parse(e.body).event as string);
+  return (await allEvents(QUEUE.events)).map((e) => JSON.parse(e.body).event as string);
 }
 
 async function bodies(): Promise<Record<string, unknown>[]> {
-  return (await allEvents()).map(
+  return (await allEvents(QUEUE.events)).map(
     (e) => JSON.parse(e.body) as Record<string, unknown>,
   );
 }
@@ -19,8 +19,8 @@ describe('sessions', () => {
   beforeEach(async () => {
     // Never actually send: these assert on what was queued.
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
-    for (const e of await allEvents()) {
-      if (e.id !== undefined) await removeEvent(e.id);
+    for (const e of await allEvents(QUEUE.events)) {
+      if (e.id !== undefined) await removeEvent(QUEUE.events, e.id);
     }
     await set(KEYS.sessionStartedAt, 0);
     await set(KEYS.backgroundedAt, 0);

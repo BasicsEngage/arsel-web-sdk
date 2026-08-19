@@ -1,13 +1,17 @@
 import {
   EVENT_IDENTIFY,
   RESERVED_PREFIX,
+  SCREEN_EVENT,
   enqueue,
   flush,
 } from './events';
+import * as inapp from './inapp';
+import { render } from './inapp-view';
 import * as push from './push';
 import * as session from './session';
 import {
   KEYS,
+  QUEUE,
   anonymousId,
   countEvents,
   get,
@@ -20,6 +24,7 @@ import type {
   ArselDiagnostics,
   ArselIdentity,
   EventProperties,
+  InAppOptions,
 } from './types';
 import { SDK_VERSION } from './version';
 
@@ -28,6 +33,7 @@ export type {
   ArselDiagnostics,
   ArselIdentity,
   EventProperties,
+  InAppOptions,
 } from './types';
 export { SDK_VERSION } from './version';
 
@@ -55,14 +61,40 @@ let preInitBuffer: BufferedEvent[] = [];
 let preInitOverflowWarned = false;
 
 function attachFlushTriggers(): void {
+  // The service worker relays the reserved arsel_iam_sync push. Inert today —
+  // nothing on the backend emits it — but wired so the day it does, an open tab
+  // refreshes without waiting for its next visibility change.
+  if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      const data = event.data as { type?: string } | undefined;
+      if (data?.type === 'arsel_iam_sync') inapp.handleSyncPing();
+    });
+  }
   // Without these, events stranded by an offline spell or a backgrounded tab
   // wait for the next track() to happen to fire.
   if (typeof window !== 'undefined') {
-    window.addEventListener('online', () => void flush().catch(() => {}));
+    window.addEventListener('online', () => {
+      void flush().catch(() => {});
+      void inapp.flushBeacons().catch(() => {});
+    });
+    // visibilitychange does not fire on a real close, and unload is unreliable
+    // on mobile. pagehide is the one the browser actually guarantees.
+    window.addEventListener('pagehide', () => {
+      inapp.cancelPending();
+      void inapp.flushBeacons().catch(() => {});
+    });
   }
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') void flush().catch(() => {});
+      if (document.visibilityState === 'visible') {
+        void flush().catch(() => {});
+        // Refresh is driven by visibility and the bundle's own TTL — never a
+        // timer. The endpoint is throttled per org but not per device.
+        void inapp.refresh().catch(() => {});
+        return;
+      }
+      inapp.cancelPending();
+      void inapp.flushBeacons().catch(() => {});
     });
   }
 }
@@ -107,15 +139,31 @@ export function init(config: ArselConfig): Promise<void> {
     if (config.serviceWorker === 'external') push.useExternal();
     else if (config.serviceWorkerPath) await push.register(config.serviceWorkerPath);
 
-    session.attach();
+    const inAppOptions = resolveInAppOptions(config.inApp);
+    session.attach(inAppOptions ? inapp.onSessionOpen : undefined);
     attachFlushTriggers();
     // A background or prerendered page has not been *seen* — the session opens
     // on the visibilitychange (or prerenderingchange → visible) that follows.
     const doc = typeof document !== 'undefined'
       ? (document as Document & { prerendering?: boolean })
       : undefined;
-    if (doc?.visibilityState === 'visible' && doc.prerendering !== true) {
-      await session.onVisible();
+    const visibleNow =
+      doc?.visibilityState === 'visible' && doc.prerendering !== true;
+    if (visibleNow) await session.onVisible();
+
+    // Registration is what mints the installationId and deviceSecret the bundle
+    // fetch authenticates with. It shows NO permission prompt and creates no
+    // push subscription — gating in-app behind promptForPush() would restrict
+    // it to the minority who accept notifications.
+    if (inAppOptions) {
+      inapp.setRenderer(makeRenderer(inAppOptions));
+      if (await push.registerDevice()) {
+        await inapp.start(debug);
+        // APP_OPEN must also fire for the direct onVisible() above, or it never
+        // fires on the first page load of an already-visible page — which is
+        // the majority of sessions.
+        if (visibleNow) inapp.onSessionOpen();
+      }
     }
 
     // Anything stranded by a previous page's close goes out now.
@@ -166,6 +214,42 @@ export async function track(
   }
   await ready;
   await enqueue(trimmed, properties);
+  // Post-init only. Replaying the pre-init buffer must not fire a burst of
+  // in-app triggers at start-up; APP_OPEN already covers that moment.
+  inapp.observe('CUSTOM_EVENT', trimmed, properties);
+}
+
+/**
+ * Record a screen or page view.
+ *
+ * One POST, two consumers: the event reaches segments and automations exactly
+ * as `track()` would, and it is the trigger source for SCREEN_VIEW in-app
+ * messages. Deliberately does NOT call `track()` — that would enqueue a second
+ * event and observe the trigger twice.
+ */
+export async function screen(
+  name: string,
+  properties: EventProperties = {},
+): Promise<void> {
+  const trimmed = name?.trim();
+  if (!trimmed) {
+    log('screen() called with a blank name — ignoring');
+    return;
+  }
+  await ready;
+  await enqueue(SCREEN_EVENT, { ...properties, screen_name: trimmed });
+  inapp.observe('SCREEN_VIEW', trimmed, properties);
+}
+
+/**
+ * Hold in-app messages back, or let them through again.
+ *
+ * For the moments a host app knows are wrong — a checkout step, a video
+ * playing full-screen. Not persisted: it describes the current page, not the
+ * device.
+ */
+export function suppressInAppMessages(suppressed: boolean): void {
+  inapp.setSuppressed(suppressed);
 }
 
 /**
@@ -206,6 +290,8 @@ export async function identify(identity: ArselIdentity): Promise<void> {
   // what the caller asked for, and deferring it leaves the two contacts split
   // until something unrelated happens to fire.
   await enqueue(EVENT_IDENTIFY, {});
+  // The cached bundle was resolved for whoever this browser was a moment ago.
+  await inapp.invalidateAudience();
 }
 
 /**
@@ -227,6 +313,7 @@ export async function reset(): Promise<void> {
     remove(KEYS.sessionStartedAt),
   ]);
   await rotateAnonymousId();
+  await inapp.invalidateAudience();
   log('identity reset');
 }
 
@@ -301,16 +388,23 @@ export async function diagnostics(): Promise<ArselDiagnostics> {
     get<string>(KEYS.installationId),
     get<string>(KEYS.deviceSecret),
     get<number>(KEYS.vapidKeyVersion),
-    countEvents(),
+    countEvents(QUEUE.events),
     push.isSubscribed(),
     get<number>(KEYS.lastResponseCode),
     get<string>(KEYS.lastResponsePath),
     get<number>(KEYS.lastResponseAtMs),
   ]);
 
+  const inApp = inapp.snapshot();
+  const pendingInAppBeacons = await inapp.pendingBeaconCount().catch(() => 0);
+
   return {
     sdkVersion: SDK_VERSION,
     initialized: ready !== null,
+    inAppMessages: inApp.messages,
+    inAppBundleVersion: inApp.bundleVersion,
+    inAppFetchedAtMs: inApp.fetchedAtMs,
+    pendingInAppBeacons,
     anonymousId: anon,
     hasAssertedIdentity: Boolean(externalId || email || phoneNumber),
     installationId,
@@ -334,6 +428,8 @@ export async function flushNow(): Promise<void> {
 export const Arsel = {
   init,
   track,
+  screen,
+  suppressInAppMessages,
   identify,
   reset,
   optOut,
@@ -345,3 +441,52 @@ export const Arsel = {
 };
 
 export default Arsel;
+
+
+/** `undefined` when in-app is switched off; a fully-resolved config otherwise. */
+function resolveInAppOptions(
+  value: ArselConfig['inApp'],
+): Required<InAppOptions> | undefined {
+  if (value === false) return undefined;
+  const provided = typeof value === 'object' && value !== null ? value : {};
+  return {
+    zIndex: provided.zIndex ?? DEFAULT_IN_APP_Z_INDEX,
+    closeLabel: provided.closeLabel ?? 'Close',
+  };
+}
+
+/**
+ * Bridges the rule engine to the DOM layer.
+ *
+ * The engine holds the `active` slot from schedule time and only releases it
+ * here, on close — so a second trigger during a delay window, or while a
+ * message is on screen, can never start a competing one.
+ */
+function makeRenderer(
+  options: Required<InAppOptions>,
+): (message: inapp.InAppMessage) => void {
+  return (message) => {
+    const eventName = inapp.triggerEventName();
+    try {
+      render(message, options, {
+        onImpression: () => void inapp.recordImpression(message, eventName),
+        onButton: (button) => {
+          void inapp.recordClick(message, button.buttonId);
+          if (button.action === 'CUSTOM_EVENT' && button.value) {
+            void track(button.value);
+          }
+        },
+        onDismiss: (visibleSeconds) => {
+          void inapp.recordDismiss(message, visibleSeconds);
+          inapp.releaseActive();
+        },
+      });
+    } catch (error) {
+      log(`in-app render failed: ${error instanceof Error ? error.message : ''}`);
+      inapp.releaseActive();
+    }
+  };
+}
+
+/** Below the maximum, so a host site's own top-most modal still wins. */
+const DEFAULT_IN_APP_Z_INDEX = 2_147_483_000;

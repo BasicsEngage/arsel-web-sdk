@@ -9,9 +9,23 @@
  */
 
 const DB_NAME = 'arsel';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const KV_STORE = 'kv';
-const EVENT_STORE = 'events';
+
+/**
+ * The two durable queues.
+ *
+ * In-app beacons live in their OWN store, not alongside events. The events
+ * drain stops at the first retryable failure to preserve a user's history
+ * order — so a single stuck beacon sharing that queue would wedge the entire
+ * analytics pipeline behind it.
+ */
+export const QUEUE = {
+  events: 'events',
+  inAppBeacons: 'inapp_beacons',
+} as const;
+
+export type QueueStore = (typeof QUEUE)[keyof typeof QUEUE];
 
 export interface PendingEvent {
   /** Monotonic within a tab; the auto-increment key doubles as delivery order. */
@@ -34,8 +48,12 @@ function openDb(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(KV_STORE)) db.createObjectStore(KV_STORE);
-      if (!db.objectStoreNames.contains(EVENT_STORE)) {
-        db.createObjectStore(EVENT_STORE, { keyPath: 'id', autoIncrement: true });
+      // Guarded by name rather than by version, so a browser installed at v1
+      // gains only the store it is missing.
+      for (const name of Object.values(QUEUE)) {
+        if (!db.objectStoreNames.contains(name)) {
+          db.createObjectStore(name, { keyPath: 'id', autoIncrement: true });
+        }
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -73,22 +91,38 @@ export function remove(key: string): Promise<unknown> {
   return tx(KV_STORE, 'readwrite', (s) => s.delete(key));
 }
 
-export function addEvent(body: string, idempotencyKey: string): Promise<unknown> {
-  return tx(EVENT_STORE, 'readwrite', (s) =>
+export function addEvent(
+  store: QueueStore,
+  body: string,
+  idempotencyKey = '',
+): Promise<unknown> {
+  return tx(store, 'readwrite', (s) =>
     s.add({ body, idempotencyKey, createdAtMs: Date.now() }),
   );
 }
 
-export function allEvents(): Promise<PendingEvent[]> {
-  return tx<PendingEvent[]>(EVENT_STORE, 'readonly', (s) => s.getAll());
+export function allEvents(store: QueueStore): Promise<PendingEvent[]> {
+  return tx<PendingEvent[]>(store, 'readonly', (s) => s.getAll());
 }
 
-export function removeEvent(id: number): Promise<unknown> {
-  return tx(EVENT_STORE, 'readwrite', (s) => s.delete(id));
+export function removeEvent(store: QueueStore, id: number): Promise<unknown> {
+  return tx(store, 'readwrite', (s) => s.delete(id));
 }
 
-export function countEvents(): Promise<number> {
-  return tx<number>(EVENT_STORE, 'readonly', (s) => s.count());
+export function countEvents(store: QueueStore): Promise<number> {
+  return tx<number>(store, 'readonly', (s) => s.count());
+}
+
+/** Oldest-first trim, so an offline spell cannot grow the queue without bound. */
+export async function trimQueue(
+  store: QueueStore,
+  max: number,
+): Promise<void> {
+  const rows = await allEvents(store);
+  if (rows.length <= max) return;
+  for (const row of rows.slice(0, rows.length - max)) {
+    if (row.id !== undefined) await removeEvent(store, row.id);
+  }
 }
 
 export const KEYS = {
@@ -107,6 +141,16 @@ export const KEYS = {
   lastResponseCode: 'last_response_code',
   lastResponsePath: 'last_response_path',
   lastResponseAtMs: 'last_response_at',
+  /** `{ bundleVersion, ttlSeconds, fetchedAtMs, messages }` — the cached bundle. */
+  inAppBundle: 'inapp_bundle',
+  /** messageId -> lifetime counters. Survives `reset()`: it describes the device. */
+  inAppState: 'inapp_state',
+  /**
+   * `{ startedAt, counts }`. Persisted rather than held in memory so
+   * `maxPerSession` survives a navigation — on a multi-page site an in-memory
+   * counter makes the cap per-page, which is not a cap at all.
+   */
+  inAppSession: 'inapp_session',
 } as const;
 
 /**

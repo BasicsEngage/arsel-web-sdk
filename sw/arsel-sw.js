@@ -15,9 +15,11 @@
 
 // Duplicated from src/ on purpose — this file is served as-is, uncompiled, and
 // cannot import from the SDK build. Change a constant there, change it here.
-const SDK_VERSION = '1.0.0';
+const SDK_VERSION = '1.1.0';
 const DB_NAME = 'arsel';
 const KV_STORE = 'kv';
+/** Reserved data key: refresh the in-app bundle, render nothing. */
+const IAM_SYNC_KEY = 'arsel_iam_sync';
 
 /** `showNotification` silently drops anything past this in Chrome. */
 const MAX_ACTIONS = 2;
@@ -48,7 +50,14 @@ function openDb() {
 
 async function readKeys(keys) {
   const db = await openDb();
-  if (!db.objectStoreNames.contains(KV_STORE)) return {};
+  // Closed on every path below. openDb() opens WITHOUT a version, so a
+  // connection left open here holds the database at its current version and
+  // makes the page's next upgrade fire `blocked` — hanging until this worker is
+  // terminated.
+  if (!db.objectStoreNames.contains(KV_STORE)) {
+    db.close();
+    return {};
+  }
   const store = db.transaction(KV_STORE, 'readonly').objectStore(KV_STORE);
   const entries = await Promise.all(
     keys.map(
@@ -60,6 +69,7 @@ async function readKeys(keys) {
         }),
     ),
   );
+  db.close();
   return Object.fromEntries(entries);
 }
 
@@ -131,6 +141,21 @@ self.addEventListener('push', (event) => {
     data = event.data ? event.data.json() : {};
   } catch {
     return; // not ours, and not parseable
+  }
+  // The in-app sync ping is checked BEFORE the claim test below: it carries no
+  // messageId and no title, so it must never reach showNotification and must
+  // never report a `delivered` engagement for a message that was never shown.
+  //
+  // Inert-but-ready — nothing on the backend emits this key yet. Bundle refresh
+  // is driven entirely by init, visibility and the bundle's own TTL.
+  if (data[IAM_SYNC_KEY]) {
+    event.waitUntil(
+      (async () => {
+        const clients = await self.clients.matchAll({ type: 'window' });
+        for (const client of clients) client.postMessage({ type: IAM_SYNC_KEY });
+      })(),
+    );
+    return;
   }
   // Claimed on arsel_v, with arsel_mid as the fallback — the same test the
   // Android parser applies. There is no marker key on the wire.

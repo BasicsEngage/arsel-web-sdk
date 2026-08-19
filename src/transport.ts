@@ -95,17 +95,33 @@ export async function post<T = unknown>(
 export async function getJson<T>(
   baseUrl: string,
   path: string,
-): Promise<T | null> {
+  headers: Record<string, string> = {},
+  authenticated = false,
+  init: RequestInit = {},
+): Promise<Response<T>> {
+  let response: globalThis.Response;
   try {
-    const response = await fetch(baseUrl + path, {
+    response = await fetch(baseUrl + path, {
+      ...init,
       credentials: 'omit',
-      headers: SDK_HEADER,
+      headers: { ...SDK_HEADER, ...headers },
     });
-    await record(path, response.status);
-    if (!response.ok) return null;
-    return (await response.json()) as T;
   } catch {
     await record(path, CODE_NO_RESPONSE);
-    return null;
+    return { result: RESULT.retryable, code: CODE_NO_RESPONSE, body: null };
   }
+
+  await record(path, response.status);
+  let parsed: T | null = null;
+  try {
+    parsed = (await response.json()) as T;
+  } catch {
+    // A 304 carries no body at all, and a non-JSON error page is not worth
+    // throwing over — the status is what the caller branches on.
+  }
+  return {
+    result: classify(response.status, authenticated),
+    code: response.status,
+    body: parsed,
+  };
 }

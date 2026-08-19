@@ -7,6 +7,59 @@ Breaking changes to the public surface wait for a major release, and are listed 
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-08-19
+
+### Added
+
+- **In-app messaging.** Messages authored in Arsel now render in the page, with no notification
+  permission and no prompt of any kind. The server resolves audience, consent, campaign window,
+  grants and lifetime caps into a per-device bundle; the SDK evaluates the trigger and the
+  session-scoped caps locally, so drawing a message costs no network round-trip. Four layouts —
+  `MODAL`, `BANNER_TOP`, `BANNER_BOTTOM`, `IMAGE_ONLY` — rendered into a closed shadow root with
+  a constructed stylesheet (falling back to `<style>`), text set with `textContent` only, and
+  colours applied through CSSOM so a strict `style-src` cannot strip them.
+- **`screen(name, properties?)`.** Records a screen or page view. One request, two consumers: the
+  event reaches segments and automations exactly as `track()` would, and it is the trigger source
+  for `SCREEN_VIEW` in-app messages.
+- **`suppressInAppMessages(boolean)`.** Holds messages back for the moments a host app knows are
+  wrong — a checkout step, a video playing full-screen.
+- **`inApp` config option.** `true` by default; pass `false` to disable, or `{ zIndex, closeLabel }`
+  to tune the layer. The default `zIndex` sits below the maximum so a host site's own top-most
+  modal still wins.
+- **Device registration without a push subscription.** `init()` now registers the browser so the
+  bundle fetch can authenticate. It shows no prompt, creates no subscription, and never touches the
+  service worker — gating in-app behind `promptForPush()` would have restricted the channel to the
+  minority who accept notifications.
+- **Accessibility.** Modals get `role="dialog"`, `aria-modal`, a focus trap reading `root.activeElement`
+  (a closed root makes `document.activeElement` resolve to the host), focus capture and restore, and
+  `Escape` to dismiss. Banners get `role="status"` with `aria-live="polite"` and never steal focus.
+  Direction is read from the host page, not assumed.
+- **`arsel_iam_sync` service-worker handling.** A reserved silent push refreshes the bundle and
+  renders nothing. Ships inert — nothing emits it yet — so refresh is driven by `init()`, tab
+  visibility and the bundle's own TTL.
+- Diagnostics gain `inAppMessages`, `inAppBundleVersion`, `inAppFetchedAtMs` and
+  `pendingInAppBeacons`.
+
+### Changed
+
+- **`getJson()` returns the full `{ result, code, body }` envelope**, matching `post()`. The bundle
+  fetch has to branch on `304` *before* `classify()` sees it — `classify` maps 304 to `permanent`,
+  which would discard the cache on every successful revalidation.
+- **The store's queue helpers take a leading queue name.** In-app beacons live in their own object
+  store: the events drain stops at the first retryable failure to preserve history order, so a
+  single stuck beacon sharing that queue would wedge the entire analytics pipeline behind it.
+- IndexedDB schema version 1 → 2, adding the beacon store. The upgrade is guarded by store name, so
+  a browser installed at v1 gains only what it is missing.
+- The service worker now closes its database handle after reading. It opens without a version, and
+  a connection left open makes the page's upgrade fire `blocked` and hang until the worker is
+  terminated.
+
+### Requires
+
+- Backend support for the in-app endpoints, CORS on `/api/v1/orgs/*/in-app/*`, `If-None-Match` in
+  the client-API allowed headers, and the org's `allowedOrigins` containing the customer's origin —
+  an empty allowlist matches nothing and rejects every visitor.
+
 ## [1.0.0] — 2026-08-17
 
 ### Added

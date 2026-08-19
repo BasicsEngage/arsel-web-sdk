@@ -45,10 +45,16 @@ export async function onHidden(now = Date.now()): Promise<void> {
   await set(KEYS.backgroundedAt, now);
 }
 
-export function attach(): void {
+/**
+ * @param onOpen invoked AFTER `onVisible()` resolves, so the session-start write
+ * has already landed and anything keyed on the session window reads the new one.
+ */
+export function attach(onOpen?: () => void): void {
   if (typeof document === 'undefined') return;
   document.addEventListener('visibilitychange', () => {
-    void (document.visibilityState === 'visible' ? onVisible() : onHidden());
+    void (document.visibilityState === 'visible'
+      ? onVisible().then(() => onOpen?.())
+      : onHidden());
   });
   // `visibilitychange` does not fire on a real close, and `unload` is not
   // reliable on mobile. `pagehide` is the one the browser actually guarantees.

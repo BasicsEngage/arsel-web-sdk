@@ -16,7 +16,7 @@ function stubPage(visibilityState = 'visible', prerendering = false) {
 }
 
 async function queuedNames(): Promise<string[]> {
-  return (await store.allEvents()).map(
+  return (await store.allEvents(store.QUEUE.events)).map(
     (e) => JSON.parse(e.body).event as string,
   );
 }
@@ -28,8 +28,8 @@ beforeEach(async () => {
   stubPage();
   store = await import('../src/store');
   sdk = await import('../src/index');
-  for (const e of await store.allEvents()) {
-    if (e.id !== undefined) await store.removeEvent(e.id);
+  for (const e of await store.allEvents(store.QUEUE.events)) {
+    if (e.id !== undefined) await store.removeEvent(store.QUEUE.events, e.id);
   }
   await store.set(store.KEYS.sessionStartedAt, 0);
   await store.set(store.KEYS.backgroundedAt, 0);
