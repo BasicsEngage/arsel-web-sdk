@@ -86,6 +86,11 @@ export interface ArselDiagnostics {
   pendingEvents: number;
   permission: NotificationPermission | 'unsupported';
   isSubscribed: boolean;
+  /**
+   * The backend's last reported `status` for this device, e.g. `REVOKED` after a
+   * durable opt-out. Named as on the Android SDK. Null before the first register.
+   */
+  subscriptionStatus: string | null;
   vapidKeyVersion: number | null;
   lastResponseCode: number | null;
   lastResponsePath: string | null;
