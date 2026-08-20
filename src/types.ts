@@ -78,6 +78,12 @@ export interface WebPushConfig {
 export interface ArselDiagnostics {
   sdkVersion: string;
   initialized: boolean;
+  /**
+   * Why the SDK refused to start, or null. Set when init() was given an invalid
+   * configuration: nothing is collected and no call has any effect until it is
+   * fixed. Same field, same rules, on all three Arsel SDKs.
+   */
+  configError: string | null;
   anonymousId: string | null;
   hasAssertedIdentity: boolean;
   installationId: string | null;
@@ -86,6 +92,11 @@ export interface ArselDiagnostics {
   pendingEvents: number;
   permission: NotificationPermission | 'unsupported';
   isSubscribed: boolean;
+  /**
+   * The backend's last reported `status` for this device, e.g. `REVOKED` after a
+   * durable opt-out. Named as on the Android SDK. Null before the first register.
+   */
+  subscriptionStatus: string | null;
   vapidKeyVersion: number | null;
   lastResponseCode: number | null;
   lastResponsePath: string | null;

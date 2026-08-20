@@ -49,7 +49,7 @@ function stubBrowser(registerImpl: (path: string) => Promise<unknown>) {
   return register;
 }
 
-function stubApi(subscriptionStatus = 200) {
+function stubApi(subscriptionStatus = 200, registerBody: Record<string, unknown> = { deviceSecret: 'ds-1' }) {
   const calls: Array<{ url: string; options?: RequestInit }> = [];
   const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
     calls.push({ url, options });
@@ -63,7 +63,7 @@ function stubApi(subscriptionStatus = 200) {
     return {
       ok: subscriptionStatus < 300,
       status: subscriptionStatus,
-      json: async () => ({ deviceSecret: 'ds-1' }),
+      json: async () => registerBody,
     };
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -79,6 +79,7 @@ beforeEach(async () => {
   await store.set(store.KEYS.baseUrl, BASE_URL);
   await store.set(store.KEYS.installationId, null);
   await store.set(store.KEYS.deviceSecret, null);
+  await store.set(store.KEYS.subscriptionStatus, null);
 });
 
 describe('register', () => {
@@ -156,6 +157,26 @@ describe('subscribe', () => {
     expect(await store.get(store.KEYS.deviceSecret)).toBe('ds-1');
   });
 
+  it('returns false when the browser cannot reach its push service', async () => {
+    // The most common real-world subscribe() failure: firewalled push service,
+    // captive portal, or a Chromium build with no push support at all.
+    const registration = fakeRegistration();
+    registration.pushManager.subscribe = vi
+      .fn()
+      .mockRejectedValue(
+        new DOMException('Registration failed - push service error', 'AbortError'),
+      );
+    stubBrowser(async () => registration);
+    stubApi();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await push.register('/arsel-sw.js');
+    await expect(push.subscribe()).resolves.toBe(false);
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('push service error'));
+    error.mockRestore();
+  });
+
   it('returns false fast when registration failed, instead of hanging on .ready', async () => {
     stubBrowser(async () => {
       throw new Error('404');
@@ -167,6 +188,78 @@ describe('subscribe', () => {
     expect(await push.subscribe()).toBe(false);
 
     expect(error).toHaveBeenCalledWith(expect.stringContaining('registration failed'));
+    error.mockRestore();
+  });
+
+  // A durable opt-out answers the register call with 200 and leaves the row
+  // REVOKED — registering is deliberately not a way to undo one. Reading only
+  // the HTTP status made the SDK report that device as subscribed, so an app
+  // would show "notifications on" to someone who can never receive another push.
+  it('reports failure when the backend kept the device revoked', async () => {
+    stubBrowser(async () => fakeRegistration());
+    stubApi(200, { deviceSecret: 'ds-1', status: 'REVOKED' });
+
+    await push.register('/arsel-sw.js');
+
+    expect(await push.subscribe()).toBe(false);
+    expect(await store.get(store.KEYS.subscriptionStatus)).toBe('REVOKED');
+  });
+
+  it('reports success when the backend accepted the device', async () => {
+    stubBrowser(async () => fakeRegistration());
+    stubApi(200, { deviceSecret: 'ds-1', status: 'ACTIVE' });
+
+    await push.register('/arsel-sw.js');
+
+    expect(await push.subscribe()).toBe(true);
+    expect(await store.get(store.KEYS.subscriptionStatus)).toBe('ACTIVE');
+  });
+});
+
+describe('isSubscribed', () => {
+  // The browser keeps its PushSubscription across an opt-out, so asking it
+  // alone always answers yes for a device the backend will never send to.
+  it('is false for a revoked device even though the browser still holds one', async () => {
+    const registration = fakeRegistration({
+      pushManager: {
+        subscribe: vi.fn(),
+        getSubscription: vi.fn().mockResolvedValue(fakeSubscription()),
+      },
+    });
+    stubBrowser(async () => registration);
+    vi.stubGlobal('navigator', {
+      language: 'en-US',
+      serviceWorker: {
+        register: vi.fn(),
+        getRegistration: vi.fn().mockResolvedValue(registration),
+        ready: new Promise(() => {}),
+      },
+    });
+    vi.stubGlobal('PushManager', class {});
+    vi.stubGlobal('Notification', { permission: 'granted' });
+
+    expect(await push.isSubscribed()).toBe(true);
+
+    await store.set(store.KEYS.subscriptionStatus, 'REVOKED');
+    expect(await push.isSubscribed()).toBe(false);
+  });
+});
+
+describe('reconcile', () => {
+  it('never rejects when subscribe() fails, because init() cannot catch it', async () => {
+    const registration = fakeRegistration();
+    registration.pushManager.subscribe = vi
+      .fn()
+      .mockRejectedValue(
+        new DOMException('Registration failed - push service error', 'AbortError'),
+      );
+    stubBrowser(async () => registration);
+    stubApi();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await push.register('/arsel-sw.js');
+    await expect(push.reconcile()).resolves.toBeUndefined();
+
     error.mockRestore();
   });
 });

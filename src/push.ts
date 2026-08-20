@@ -2,6 +2,9 @@ import { KEYS, anonymousId, get, set } from './store';
 import { RESULT, getJson, post } from './transport';
 import type { WebPushConfig } from './types';
 
+/** `contact_push_subscriptions.status` for a device the backend will not send to. */
+const SUBSCRIPTION_REVOKED = 'REVOKED';
+
 /**
  * VAPID keys arrive base64url; `applicationServerKey` wants raw bytes.
  *
@@ -167,6 +170,32 @@ export async function preflight(
 }
 
 /**
+ * `pushManager.subscribe()` rejects whenever the browser cannot reach its push
+ * service — a firewalled network, a captive portal, private browsing, or a
+ * Chromium build without push support. None of those are the caller's mistake
+ * and none are feature-detectable, so they resolve to `null` like every other
+ * failure here rather than escaping as an exception.
+ */
+async function trySubscribe(
+  registration: ServiceWorkerRegistration,
+  vapidPublicKey: string,
+): Promise<PushSubscription | null> {
+  try {
+    return await registration.pushManager.subscribe({
+      // Non-negotiable: the Push API only accepts a userVisibleOnly subscription
+      // in Chrome, and silent push is what the restriction exists to prevent.
+      userVisibleOnly: true,
+      applicationServerKey: decodeBase64Url(vapidPublicKey),
+    });
+  } catch (error) {
+    console.error(
+      `[arsel] push subscribe failed: ${error instanceof Error ? error.message : error}`,
+    );
+    return null;
+  }
+}
+
+/**
  * Subscribe this browser and register it with Arsel.
  *
  * Only ever called from a user gesture path — `subscribe()` triggers the
@@ -193,12 +222,8 @@ export async function subscribe(): Promise<boolean> {
     console.error(`[arsel] ${error instanceof Error ? error.message : error}`);
     return false;
   }
-  const subscription = await registration.pushManager.subscribe({
-    // Non-negotiable: the Push API only accepts a userVisibleOnly subscription
-    // in Chrome, and silent push is what the restriction exists to prevent.
-    userVisibleOnly: true,
-    applicationServerKey: decodeBase64Url(config.vapidPublicKey),
-  });
+  const subscription = await trySubscribe(registration, config.vapidPublicKey);
+  if (!subscription) return false;
 
   return sendSubscription(subscription, config.keyVersion);
 }
@@ -224,7 +249,7 @@ async function sendSubscription(
   // `auth` secret, and every send then fails encryption with no obvious cause.
   const json = subscription.toJSON();
 
-  const response = await post<{ deviceSecret?: string }>(
+  const response = await post<{ deviceSecret?: string; status?: string }>(
     baseUrl,
     subscriptionsPath(clientKey),
     {
@@ -251,7 +276,13 @@ async function sendSubscription(
   }
   await set(KEYS.vapidKeyVersion, keyVersion);
   await set(KEYS.endpoint, json.endpoint ?? null);
-  return true;
+
+  // A durable opt-out answers 200 and leaves the row REVOKED — registering does
+  // not undo one, by design. Reporting that as success is how an app ends up
+  // showing "notifications on" to someone who will never receive another push.
+  const status = response.body?.status ?? null;
+  await set(KEYS.subscriptionStatus, status);
+  return status !== SUBSCRIPTION_REVOKED;
 }
 
 /**
@@ -279,7 +310,12 @@ export async function optOut(): Promise<boolean> {
     { 'X-Arsel-Device-Auth': deviceSecret },
     true,
   );
-  return response.result === RESULT.success;
+  if (response.result !== RESULT.success) return false;
+  // The browser keeps its PushSubscription — the revocation is server-side, and
+  // the endpoint is what a later re-subscribe reuses. Recording the status is
+  // what stops `isSubscribed()` reporting this browser as reachable.
+  await set(KEYS.subscriptionStatus, SUBSCRIPTION_REVOKED);
+  return true;
 }
 
 /**
@@ -326,15 +362,18 @@ export async function reconcile(): Promise<void> {
   // applicationServerKey throws InvalidStateError while one is still live.
   if (existing) await existing.unsubscribe().catch(() => false);
 
-  const fresh = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: decodeBase64Url(config.vapidPublicKey),
-  });
+  const fresh = await trySubscribe(registration, config.vapidPublicKey);
+  if (!fresh) return;
   await sendSubscription(fresh, config.keyVersion);
 }
 
 export async function isSubscribed(): Promise<boolean> {
   if (!isSupported()) return false;
+  // Server-side revocation outranks the browser: the PushSubscription object
+  // survives an opt-out, so asking the browser alone always answers "yes".
+  if ((await get<string>(KEYS.subscriptionStatus)) === SUBSCRIPTION_REVOKED) {
+    return false;
+  }
   try {
     // Never `.ready` — it hangs forever when nothing is registered.
     const registration =

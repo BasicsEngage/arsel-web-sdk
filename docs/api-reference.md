@@ -297,3 +297,30 @@ what actually happens on that platform.
 | Ask for push | `requestNotificationPermission()` | `promptForPush()` |
 | Force delivery | `flushNow()` | `flushNow()` |
 | Support snapshot | `diagnostics()` | `diagnostics()` |
+
+
+### Invalid configuration
+
+All three SDKs apply the same four rules, in the same order, and all three respond the same way:
+they **log an error, decline to start, and never throw**.
+
+1. `clientKey` is non-blank
+2. `clientKey` begins `pub_` — the check that catches a secret API key shipped inside an app bundle
+3. `baseUrl` is HTTPS, except plain http to `localhost` / `127.0.0.1` (and `10.0.2.2` on Android,
+   the only address an emulator can reach the developer's host on)
+4. `baseUrl` parses as a URL
+
+Nothing is collected while a config error stands, and no call has any effect. The reason is
+readable at any time from the support snapshot:
+
+| SDK | Reading it |
+| --- | --- |
+| Android | `Arsel.diagnostics()?.configError` |
+| Web | `(await Arsel.diagnostics()).configError` |
+| iOS | `Arsel.diagnostics()?.configError` |
+
+Refusing rather than throwing is deliberate. The mistake is made at development time but the
+failure lands at runtime on a user's device — the key may come from a build variant, a remote
+config, or a CI secret that arrived empty — and an analytics SDK crashing an app over its own
+configuration is a worse outcome than losing telemetry. `diagnostics()` answers with the reason
+even before initialization, which is the state it describes.
