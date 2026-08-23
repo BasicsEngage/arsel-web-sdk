@@ -57,10 +57,12 @@ jobs:
       - run: npm test
       - run: npm run build
 
-      - run: npm publish --access public --loglevel verbose
+      - run: npm publish --access public
 
-      # npm reports a failed OIDC exchange as a bare ENEEDAUTH; the debug log is
-      # the only place it says what it actually attempted.
+      # npm reports a failed OIDC exchange as a bare ENEEDAUTH. The debug log
+      # records the exchange at verbose level whatever the console loglevel, and
+      # is the only place npm says why — e.g. "package not found", meaning no
+      # trusted publisher is registered for this package.
       - name: npm debug log
         if: failure()
         run: tail -80 /home/runner/.npm/_logs/*-debug-0.log
