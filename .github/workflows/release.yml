@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: write
-  id-token: write # npm --provenance
+  id-token: write # npm trusted publishing (OIDC)
 
 jobs:
   publish:
@@ -14,15 +14,6 @@ jobs:
     environment: release
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check NPM_TOKEN is configured
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "::error::NPM_TOKEN secret is not set — see RELEASING.md for the one-time setup"
-            exit 1
-          fi
 
       - name: Check the tag matches package.json
         run: |
@@ -48,14 +39,16 @@ jobs:
           cache: npm
           registry-url: 'https://registry.npmjs.org'
 
+      # Trusted publishing needs npm >= 11.5.1; node 22 ships 10.9.x, which fails
+      # with a misleading 404/ENEEDAUTH instead of a version error.
+      - run: npm install -g npm@latest
+
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
 
-      - run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --access public
 
       - name: Create the GitHub release
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
