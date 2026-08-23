@@ -7,7 +7,7 @@ Breaking changes to the public surface wait for a major release, and are listed 
 
 ## [Unreleased]
 
-## [1.1.0] — 2026-08-19
+## [1.1.0] — 2026-08-23
 
 ### Added
 
@@ -39,6 +39,8 @@ Breaking changes to the public surface wait for a major release, and are listed 
   visibility and the bundle's own TTL.
 - Diagnostics gain `inAppMessages`, `inAppBundleVersion`, `inAppFetchedAtMs` and
   `pendingInAppBeacons`.
+- **`diagnostics().configError`.** Reports why initialization was refused, readable before
+  initialization — which is precisely the state it describes.
 
 ### Changed
 
@@ -53,6 +55,26 @@ Breaking changes to the public surface wait for a major release, and are listed 
 - The service worker now closes its database handle after reading. It opens without a version, and
   a connection left open makes the page's upgrade fire `blocked` and hang until the worker is
   terminated.
+- **`init()` no longer rejects on invalid configuration.** It is routinely called un-awaited, so the
+  rejection reached the page as an unhandled rejection the host could not catch — and an analytics
+  SDK must not break a page over its own misconfiguration. It logs, declines to start, and the
+  collecting calls then genuinely no-op: a refused SDK that still queued would grow IndexedDB
+  behind a flush that can never succeed. All three Arsel SDKs now behave identically here.
+- The four configuration rules match the Android and iOS SDKs exactly, including the `pub_` prefix
+  check — the one that catches a secret API key pasted into page-readable source.
+
+### Fixed
+
+- **An unreachable push service no longer escapes `init()`.** `pushManager.subscribe()` rejects
+  whenever the browser cannot reach its push service — a firewalled network, a captive portal,
+  private browsing, a Chromium build without push support. None are the caller's mistake and none
+  are feature-detectable. Both call sites now resolve to `null` like every other failure here.
+- **A revoked device no longer reports as subscribed.** A durable opt-out answers the register call
+  with `200` and deliberately leaves the row `REVOKED`; reading only the HTTP status, `subscribe()`
+  returned `true`, and `isSubscribed()` asked the browser, which keeps its `PushSubscription`
+  across an opt-out. So `promptForPush()` reported success and an app would show "notifications on"
+  to someone who can never receive another push. The backend's status is now persisted and
+  consulted as `subscriptionStatus`, matching the Android SDK.
 
 ### Requires
 
