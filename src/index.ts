@@ -208,11 +208,13 @@ export function init(config: ArselConfig): Promise<void> {
       }
     }
 
-    // Anything stranded by a previous page's close goes out now.
-    void flush();
+    // Anything stranded by a previous page's close goes out now. Caught like
+    // every other fire-and-forget call here: nothing awaits these, so a
+    // rejection would reach the page as one the host cannot intercept.
+    void flush().catch(() => {});
     // Silent: it only acts if the org rotated its keys, and permission is
     // already granted in that case.
-    void push.reconcile();
+    void push.reconcile().catch(() => {});
     log(`initialized (sdk ${SDK_VERSION})`);
   })();
   return ready;

@@ -189,6 +189,24 @@ describe('identify() validation', () => {
   });
 });
 
+describe('background work never reaches the page', () => {
+  // init() kicks off flush() and push.reconcile() fire-and-forget. Without a
+  // catch on each, anything they throw surfaces as an unhandled rejection the
+  // host page cannot intercept — the same failure init() itself was hardened
+  // against. A row the drain cannot parse is the cheapest way to make it throw.
+  it('swallows a rejection from the flush init() fires and forgets', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    await store.addEvent(store.QUEUE.events, '{ not json', 'k1');
+
+    await sdk.init({ clientKey: 'pub_x', baseUrl: 'https://api.example.com' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    process.off('unhandledRejection', unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+});
+
 describe('flush triggers', () => {
   it('flushes when the browser comes back online and when the tab becomes visible', async () => {
     await sdk.init({ clientKey: 'pub_x', baseUrl: 'https://api.example.com' });

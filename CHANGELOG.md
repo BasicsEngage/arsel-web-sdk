@@ -69,6 +69,12 @@ Breaking changes to the public surface wait for a major release, and are listed 
   whenever the browser cannot reach its push service — a firewalled network, a captive portal,
   private browsing, a Chromium build without push support. None are the caller's mistake and none
   are feature-detectable. Both call sites now resolve to `null` like every other failure here.
+- **`init()` no longer leaks an unhandled rejection from its background work.** It kicks off the
+  stranded-events flush and the push reconcile fire-and-forget, and neither carried a catch — so
+  anything they threw (a queue row that will not parse, an IndexedDB failure) surfaced on the host
+  page as a rejection it could not intercept. The same failure mode `init()` itself was hardened
+  against in this release, through a different door. Both now match the catch every other
+  fire-and-forget call site here already used.
 - **A revoked device no longer reports as subscribed.** A durable opt-out answers the register call
   with `200` and deliberately leaves the row `REVOKED`; reading only the HTTP status, `subscribe()`
   returned `true`, and `isSubscribed()` asked the browser, which keeps its `PushSubscription`
