@@ -136,6 +136,7 @@ export const KEYS = {
   deviceSecret: 'device_secret',
   vapidKeyVersion: 'vapid_key_version',
   endpoint: 'endpoint',
+  subscriptionStatus: 'subscription_status',
   sessionStartedAt: 'session_started_at',
   backgroundedAt: 'backgrounded_at',
   lastResponseCode: 'last_response_code',

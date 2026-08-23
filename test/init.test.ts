@@ -45,10 +45,54 @@ describe('init() validation', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('rejects http anywhere else', async () => {
+  // Never rejects, on any platform. init() is routinely called un-awaited, so a
+  // rejection here reached the page as an unhandled rejection the host could not
+  // catch — and an analytics SDK must not break a page over its own config.
+  it('refuses to start on plain http instead of rejecting', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
     await expect(
       sdk.init({ clientKey: 'pub_x', baseUrl: 'http://api.example.com' }),
-    ).rejects.toThrow(/HTTPS/);
+    ).resolves.toBeUndefined();
+
+    const diag = await sdk.diagnostics();
+    expect(diag.configError).toMatch(/HTTPS/);
+    expect(diag.initialized).toBe(false);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('not started'));
+    error.mockRestore();
+  });
+
+  it('refuses a missing clientKey', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await sdk.init({ clientKey: '', baseUrl: 'https://api.example.com' });
+
+    expect((await sdk.diagnostics()).configError).toMatch(/clientKey is required/);
+    error.mockRestore();
+  });
+
+  // The rule that catches a secret API key pasted into page-readable source.
+  it('refuses a key that is not the publishable pub_ key', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await sdk.init({ clientKey: 'sk_live_secret', baseUrl: 'https://api.example.com' });
+
+    expect((await sdk.diagnostics()).configError).toMatch(/never a secret API key/);
+    error.mockRestore();
+  });
+
+  // "Refused" has to mean refused: a queue that still grows behind a flush that
+  // can never succeed is a silent unbounded IndexedDB leak.
+  it('collects nothing after refusing', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await sdk.init({ clientKey: '', baseUrl: 'https://api.example.com' });
+    await sdk.track('should.not.persist', { n: 1 });
+
+    expect(await queuedNames()).toEqual([]);
+    expect(await sdk.promptForPush()).toBe(false);
+    expect(await sdk.optOut()).toBe(false);
+    error.mockRestore();
   });
 });
 

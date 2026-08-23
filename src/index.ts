@@ -39,6 +39,7 @@ export { SDK_VERSION } from './version';
 
 let ready: Promise<void> | null = null;
 let debug = false;
+let configError: string | null = null;
 
 function log(message: string): void {
   if (debug) console.info(`[arsel] ${message}`);
@@ -107,17 +108,58 @@ function attachFlushTriggers(): void {
  * load is what gets an origin permanently blocked by Chrome's abusive-
  * notification heuristics; call {@link promptForPush} from a user gesture.
  */
+/**
+ * The same four rules the Android and iOS SDKs apply, in the same order, so a
+ * misconfiguration reads identically on every platform.
+ *
+ * The `pub_` check is not cosmetic: it is the one that catches a secret API key
+ * pasted into page-readable source, which is a credential leak rather than a
+ * typo.
+ */
+/**
+ * True once init() has been given a workable configuration. Every collecting
+ * call checks it: a refused SDK that still queued events would grow IndexedDB
+ * forever behind a flush that can never succeed.
+ */
+function started(): boolean {
+  return configError === null;
+}
+
+function validateConfig(config: ArselConfig): string | null {
+  if (!config.clientKey?.trim()) {
+    return "clientKey is required (the org's publishable pub_… key)";
+  }
+  if (!config.clientKey.startsWith('pub_')) {
+    return 'clientKey should be the publishable pub_… key — never a secret API key';
+  }
+  const localhostHttp = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(
+    config.baseUrl ?? '',
+  );
+  if (!config.baseUrl?.startsWith('https://') && !localhostHttp) {
+    return 'baseUrl must be HTTPS (http is allowed for localhost only)';
+  }
+  try {
+    new URL(config.baseUrl);
+  } catch {
+    return 'baseUrl is not a valid URL';
+  }
+  return null;
+}
+
 export function init(config: ArselConfig): Promise<void> {
   if (ready) return ready;
   ready = (async () => {
-    if (!config.clientKey) throw new Error('Arsel: clientKey is required');
-    const localhostHttp = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(
-      config.baseUrl ?? '',
-    );
-    if (!config.baseUrl?.startsWith('https://') && !localhostHttp) {
-      throw new Error('Arsel: baseUrl must be HTTPS (http is allowed for localhost only)');
-    }
     debug = config.debug ?? false;
+
+    // Never throws. `init()` is routinely called un-awaited, so rejecting here
+    // surfaced as an unhandled rejection the host could not catch, and an
+    // analytics SDK must not take down a page over its own misconfiguration.
+    // The reason is readable at any time via `diagnostics().configError`.
+    configError = validateConfig(config);
+    if (configError) {
+      console.error(`[arsel] not started — ${configError}`);
+      return;
+    }
 
     const baseUrl = config.baseUrl.replace(/\/+$/, '');
     await Promise.all([
@@ -213,6 +255,7 @@ export async function track(
     return;
   }
   await ready;
+  if (!started()) return;
   await enqueue(trimmed, properties);
   // Post-init only. Replaying the pre-init buffer must not fire a burst of
   // in-app triggers at start-up; APP_OPEN already covers that moment.
@@ -262,6 +305,7 @@ export function suppressInAppMessages(suppressed: boolean): void {
  */
 export async function identify(identity: ArselIdentity): Promise<void> {
   await ready;
+  if (!started()) return;
   let { email, phoneNumber } = identity ?? {};
   const externalId = identity?.externalId;
 
@@ -306,6 +350,7 @@ export async function identify(identity: ArselIdentity): Promise<void> {
  */
 export async function reset(): Promise<void> {
   await ready;
+  if (!started()) return;
   await Promise.all([
     remove(KEYS.externalId),
     remove(KEYS.email),
@@ -328,6 +373,7 @@ export async function reset(): Promise<void> {
  */
 export async function optOut(): Promise<boolean> {
   await ready;
+  if (!started()) return false;
   const revoked = await push.optOut();
   log(revoked ? 'push opt-out recorded' : 'push opt-out not sent — no registration to revoke');
   return revoked;
@@ -343,6 +389,7 @@ export async function optOut(): Promise<boolean> {
  */
 export async function promptForPush(): Promise<boolean> {
   await ready;
+  if (!started()) return false;
   if (!push.isSupported()) return false;
   // Verified BEFORE prompting: a broken worker setup would otherwise burn the
   // origin's one real permission prompt on a subscription that can never settle.
@@ -377,6 +424,7 @@ export async function diagnostics(): Promise<ArselDiagnostics> {
     keyVersion,
     pendingEvents,
     subscribed,
+    subscriptionStatus,
     lastResponseCode,
     lastResponsePath,
     lastResponseAtMs,
@@ -390,6 +438,7 @@ export async function diagnostics(): Promise<ArselDiagnostics> {
     get<number>(KEYS.vapidKeyVersion),
     countEvents(QUEUE.events),
     push.isSubscribed(),
+    get<string>(KEYS.subscriptionStatus),
     get<number>(KEYS.lastResponseCode),
     get<string>(KEYS.lastResponsePath),
     get<number>(KEYS.lastResponseAtMs),
@@ -400,7 +449,8 @@ export async function diagnostics(): Promise<ArselDiagnostics> {
 
   return {
     sdkVersion: SDK_VERSION,
-    initialized: ready !== null,
+    initialized: ready !== null && configError === null,
+    configError,
     inAppMessages: inApp.messages,
     inAppBundleVersion: inApp.bundleVersion,
     inAppFetchedAtMs: inApp.fetchedAtMs,
@@ -412,6 +462,7 @@ export async function diagnostics(): Promise<ArselDiagnostics> {
     pendingEvents,
     permission: push.isSupported() ? Notification.permission : 'unsupported',
     isSubscribed: subscribed,
+    subscriptionStatus,
     vapidKeyVersion: keyVersion,
     lastResponseCode,
     lastResponsePath,
@@ -422,6 +473,7 @@ export async function diagnostics(): Promise<ArselDiagnostics> {
 /** Deliver anything queued now, rather than on the next natural drain. */
 export async function flushNow(): Promise<void> {
   await ready;
+  if (!started()) return;
   await flush();
 }
 
