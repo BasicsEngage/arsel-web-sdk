@@ -57,7 +57,13 @@ jobs:
       - run: npm test
       - run: npm run build
 
-      - run: npm publish --access public
+      - run: npm publish --access public --loglevel verbose
+
+      # npm reports a failed OIDC exchange as a bare ENEEDAUTH; the debug log is
+      # the only place it says what it actually attempted.
+      - name: npm debug log
+        if: failure()
+        run: tail -80 /home/runner/.npm/_logs/*-debug-0.log
 
       - name: Create the GitHub release
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
