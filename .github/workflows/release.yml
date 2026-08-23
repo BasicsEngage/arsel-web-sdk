@@ -33,15 +33,24 @@ jobs:
             exit 1
           fi
 
+      # No registry-url on purpose: it makes setup-node write an .npmrc with
+      # _authToken=${NODE_AUTH_TOKEN} and set that variable to its own
+      # XXXXX-XXXXX placeholder, so npm sends a bogus credential and never falls
+      # through to OIDC. npm reports that as a 404 on the PUT, not as an auth error.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          registry-url: 'https://registry.npmjs.org'
 
       # Trusted publishing needs npm >= 11.5.1; node 22 ships 10.9.x, which fails
       # with a misleading 404/ENEEDAUTH instead of a version error.
       - run: npm install -g npm@latest
+
+      - name: Show the resolved npm version and auth config
+        run: |
+          npm --version
+          npm config get registry
+          echo "NODE_AUTH_TOKEN is ${NODE_AUTH_TOKEN:+SET}${NODE_AUTH_TOKEN:-UNSET}"
 
       - run: npm ci
       - run: npm run typecheck

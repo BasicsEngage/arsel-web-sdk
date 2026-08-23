@@ -32,6 +32,15 @@ needs npm ≥ 11.5.1 / Node ≥ 22.14.0, and `setup-node` with `node-version: 22
 which fails with a misleading `404` / `ENEEDAUTH` rather than a version error
 ([npm/cli#9088](https://github.com/npm/cli/issues/9088)). Don't drop that step.
 
+The `setup-node` step deliberately has **no `registry-url`**. With it, setup-node writes an
+`.npmrc` containing `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` and sets
+`NODE_AUTH_TOKEN` to its own `XXXXX-XXXXX-XXXXX-XXXXX` placeholder when no token is supplied. npm
+then sends that bogus credential on every request and never falls through to OIDC — and reports the
+rejection as `404 Not Found - PUT https://registry.npmjs.org/@arsel.sa%2fweb-sdk`, which reads like
+a missing package rather than an auth failure. The tell is `npm warn Unknown user config
+"always-auth"` in the log: that warning only appears when setup-node's `.npmrc` is in play. Adding
+`registry-url` back breaks publishing.
+
 Provenance attestations are generated automatically under OIDC — no `--provenance` flag — and
 require the GitHub repo to be **public** at publish time. Confirm after a release:
 
