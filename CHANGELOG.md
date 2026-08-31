@@ -7,7 +7,17 @@ Breaking changes to the public surface wait for a major release, and are listed 
 
 ## [Unreleased]
 
-## [1.1.0] — 2026-08-23
+## [1.1.1] — 2026-08-23
+### Fixed
+
+- **In-app button destinations can no longer carry an executing scheme.** A button whose
+  `value` was `javascript:`, `data:`, `vbscript:`, `file:` or `blob:` was assigned straight to
+  an `<a href>` and, for `DEEP_LINK`, handed to `location.assign` — either of which executes it
+  in the host page's origin. Both sinks now parse the destination and refuse those schemes; a
+  `URL` button with an unusable destination renders as a plain button rather than a link. The
+  API validates the same set on write, so this is the second line for bundles authored earlier.
+
+## [1.1.0] — 2026-08-19
 
 ### Added
 

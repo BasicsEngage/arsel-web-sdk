@@ -358,4 +358,95 @@ describe('in-app renderer', () => {
       expect(styled).toBe(true);
     });
   });
+
+  describe('button destinations', () => {
+    /**
+     * The server validates these on write, so this suite covers the second
+     * line: a bundle stored before that validation, or a campaign authored
+     * against an older backend, still renders through here.
+     */
+    const hostile = [
+      'javascript:alert(1)',
+      'JavaScript:alert(1)',
+      '  javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      'vbscript:msgbox(1)',
+    ];
+
+    const urlButton = (value: string) => ({
+      buttonId: 'b1',
+      label: 'Go',
+      action: 'URL' as const,
+      value,
+      style: 'PRIMARY' as const,
+    });
+
+    it.each(hostile)('never renders %j as a link', (value) => {
+      const handle = render(
+        message({ buttons: [urlButton(value)] }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      // Falls back to a plain <button>, which cannot navigate at all.
+      expect(handle.root.querySelector('a.cta')).toBeNull();
+      expect(handle.root.querySelector('button.cta')).not.toBeNull();
+    });
+
+    it('renders an ordinary https destination as a link', () => {
+      const handle = render(
+        message({ buttons: [urlButton('https://arsel.sa/pricing')] }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      const link = handle.root.querySelector('a.cta') as HTMLAnchorElement;
+      expect(link).not.toBeNull();
+      expect(link.href).toBe('https://arsel.sa/pricing');
+      expect(link.rel).toBe('noopener noreferrer');
+    });
+
+    it.each(hostile)('does not navigate to %j on a deep-link tap', (value) => {
+      const assign = vi.fn();
+      vi.spyOn(window, 'location', 'get').mockReturnValue({
+        ...window.location,
+        href: 'https://host.test/page',
+        assign,
+      } as unknown as Location);
+
+      const handle = render(
+        message({
+          buttons: [{ ...urlButton(value), action: 'DEEP_LINK' as const }],
+        }),
+        OPTIONS,
+        callbacks(),
+      );
+      (handle.root.querySelector('button.cta') as HTMLElement).click();
+
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    it('does navigate for a genuine app scheme', () => {
+      const assign = vi.fn();
+      vi.spyOn(window, 'location', 'get').mockReturnValue({
+        ...window.location,
+        href: 'https://host.test/page',
+        assign,
+      } as unknown as Location);
+
+      const handle = render(
+        message({
+          buttons: [
+            { ...urlButton('myapp://cart'), action: 'DEEP_LINK' as const },
+          ],
+        }),
+        OPTIONS,
+        callbacks(),
+      );
+      (handle.root.querySelector('button.cta') as HTMLElement).click();
+
+      expect(assign).toHaveBeenCalledWith('myapp://cart');
+    });
+  });
+
 });

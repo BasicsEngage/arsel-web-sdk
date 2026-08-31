@@ -240,7 +240,7 @@ function buildButtonRow(
 
   for (const button of message.buttons) {
     const element =
-      button.action === 'URL' && button.value
+      button.action === 'URL' && safeDestination(button.value)
         ? buildLink(button)
         : buildButton(button);
     element.addEventListener('click', () => {
@@ -248,8 +248,9 @@ function buildButtonRow(
       // have its click persisted, and the queue survives the unload.
       if (button.action !== 'DISMISS') callbacks.onButton(button);
       close(button.action === 'DISMISS' ? 'dismiss' : 'button');
-      if (button.action === 'DEEP_LINK' && button.value) {
-        location.assign(button.value);
+      if (button.action === 'DEEP_LINK') {
+        const destination = safeDestination(button.value);
+        if (destination) location.assign(destination);
       }
     });
     row.append(element);
@@ -257,9 +258,33 @@ function buildButtonRow(
   return row;
 }
 
+/**
+ * Schemes that execute rather than navigate.
+ *
+ * The server validates button destinations on write, so this is the second
+ * line: an SDK version older than that validation, or a bundle already stored
+ * before it landed, still renders through here. Both sinks are guarded — an
+ * `<a href>` and `location.assign` execute a `javascript:` URL alike.
+ */
+const EXECUTABLE_SCHEMES = ['javascript:', 'data:', 'vbscript:', 'file:', 'blob:'];
+
+function safeDestination(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    // The browser's own parser, so we agree with it on the forms a regex
+    // misses — leading whitespace, embedded newlines in the scheme.
+    const url = new URL(value, location.href);
+    return EXECUTABLE_SCHEMES.includes(url.protocol.toLowerCase())
+      ? null
+      : value;
+  } catch {
+    return null;
+  }
+}
+
 function buildLink(button: InAppButton): HTMLElement {
   const link = document.createElement('a');
-  link.href = button.value ?? '#';
+  link.href = safeDestination(button.value) ?? '#';
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.className = `cta ${button.style.toLowerCase()}`;
