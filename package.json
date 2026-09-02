@@ -1,6 +1,6 @@
 {
   "name": "@arsel.sa/web-sdk",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Arsel web SDK — events, identity and web push.",
   "license": "MIT",
   "author": "Arsel (https://arsel.sa)",

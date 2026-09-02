@@ -9,6 +9,34 @@ Breaking changes to the public surface wait for a major release, and are listed 
 
 ### Added
 
+- **Custom HTML messages.** The `CUSTOM_HTML` layout renders markup written in the dashboard
+  instead of a headline, body and buttons. It draws into an iframe with `sandbox="allow-scripts"`
+  and **no** `allow-same-origin` — a null origin, so the creative cannot reach the host page's
+  DOM, cookies or storage, and cannot navigate the page around it. `allow-top-navigation`,
+  `allow-popups`, `allow-modals` and `allow-forms` are all withheld.
+
+  JavaScript is off unless the author explicitly enabled it, in which case `allow-scripts` is
+  dropped too and the frame is inert markup.
+
+  With script on, the creative talks to the SDK over `postMessage` — `arsel:dismiss`,
+  `arsel:track`, `arsel:button`, `arsel:submit` and `arsel:resize`. Every message is checked
+  against the frame's own window, so nothing else on the page can forge one; a button is named
+  by id and resolved against the campaign's own buttons, so markup can ask for an action the
+  author defined but can never invent a destination. Submissions are bounded and heights are
+  clamped to 90% of the viewport.
+
+  The same three lines work on web, iOS and Android — the mobile SDKs inject a shim that
+  forwards exactly these posts. See `docs/custom-html-messages.md`. The API withholds the
+  layout from any web build below 1.5.0.
+
+### Fixed
+
+- **`InAppLayout` had drifted from what the SDK actually renders.** The exported type still
+  listed the original three layouts while four more were renderable at runtime, so every
+  `layout === 'ALERT'`-style comparison elsewhere checked against a union with no such member
+  and was silently dead code. The type is now derived from the runtime allowlist, which makes
+  the two impossible to separate again.
+
 - **Form and rating messages.** The `FORM` and `RATING` layouts render inputs — text,
   email, tel, dropdown, radio, checkbox and a star/NPS rating — and report the answers
   on a new `submitted` beacon. A required field that is empty blocks submission and

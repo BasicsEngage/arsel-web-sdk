@@ -48,7 +48,7 @@ const DEFAULT_RULES = {
  * is told, but a build that receives a layout missing from this list drops the
  * message with only a debug line to show for it.
  */
-const WEB_LAYOUTS: readonly string[] = [
+const WEB_LAYOUTS = [
   'MODAL',
   'BANNER_TOP',
   'BANNER_BOTTOM',
@@ -57,7 +57,8 @@ const WEB_LAYOUTS: readonly string[] = [
   'ALERT',
   'FORM',
   'RATING',
-];
+  'CUSTOM_HTML',
+] as const;
 
 let started = false;
 let bundle: CachedBundle | null = null;
@@ -298,11 +299,19 @@ function parseMessage(input: unknown): InAppMessage | null {
     log('message missing a required field');
     return null;
   }
-  if (!WEB_LAYOUTS.includes(layout)) {
+  if (!isWebLayout(layout)) {
     // Either FULLSCREEN, which is filtered server-side for web, or a newer
     // layout this build predates. Logging is the only signal an author will ever
     // get for a message that simply never appears.
     log(`layout ${layout} is not renderable on web`);
+    return null;
+  }
+
+  const customHtml = parseCustomHtml(input.customHtml);
+  if (layout === 'CUSTOM_HTML' && !customHtml) {
+    // Dropped whole, not degraded to a bare headline panel: the author designed markup, and a
+    // stray text modal in its place is a worse outcome than the message not appearing.
+    log('custom-html message has no usable source');
     return null;
   }
 
@@ -325,7 +334,7 @@ function parseMessage(input: unknown): InAppMessage | null {
         num(rules.minSecondsBetween) ?? DEFAULT_RULES.minSecondsBetween,
       delaySeconds: num(rules.delaySeconds) ?? DEFAULT_RULES.delaySeconds,
     },
-    layout: layout as InAppLayout,
+    layout,
     content: {
       headline,
       body: str(content.body) ?? '',
@@ -335,6 +344,7 @@ function parseMessage(input: unknown): InAppMessage | null {
       // Absent means "not suppressed"; only an explicit false hides it.
       showCloseButton: content.showCloseButton !== false,
     },
+    customHtml,
     // `fields` arrives as null, not [], on every layout that collects nothing.
     fields: Array.isArray(input.fields)
       ? input.fields
@@ -363,6 +373,30 @@ function parseButton(input: unknown): InAppButton | null {
     action: action as InAppAction,
     value: str(input.value),
     style: str(input.style) === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY',
+  };
+}
+
+/**
+ * Null when the declared source carries no payload, which drops the whole message: an empty
+ * sandbox still reports a healthy impression, and that is indistinguishable from delivery.
+ */
+function parseCustomHtml(input: unknown): InAppCustomHtml | null {
+  if (!isRecord(input)) return null;
+
+  const source = str(input.source);
+  if (source !== 'INLINE' && source !== 'URL') return null;
+
+  const html = str(input.html) ?? null;
+  const url = str(input.url) ?? null;
+  if (source === 'INLINE' ? !html : !url) return null;
+
+  return {
+    source,
+    html,
+    url,
+    // Absent means OFF. Anything but an explicit true leaves the frame scriptless.
+    allowJavaScript: input.allowJavaScript === true,
+    overlayStyle: str(input.overlayStyle) === 'TRANSPARENT' ? 'TRANSPARENT' : 'DARK',
   };
 }
 
@@ -750,11 +784,20 @@ function parseDate(value: unknown): number | null {
 const CODE_OFFLINE = -1;
 const NOT_MODIFIED = 304;
 
-export type InAppLayout =
-  | 'MODAL'
-  | 'BANNER_TOP'
-  | 'BANNER_BOTTOM'
-  | 'IMAGE_ONLY';
+/**
+ * Derived from `WEB_LAYOUTS`, not written out again.
+ *
+ * The two were maintained separately and drifted: four layouts were renderable
+ * at runtime while the type still listed the original three, so every
+ * `layout === 'ALERT'`-style check elsewhere compared against a union that had
+ * no such member and was silently dead code.
+ */
+export type InAppLayout = (typeof WEB_LAYOUTS)[number];
+
+/** Narrows a wire string to a layout this build can actually draw. */
+function isWebLayout(value: string): value is InAppLayout {
+  return (WEB_LAYOUTS as readonly string[]).includes(value);
+}
 
 export type InAppTriggerType = 'APP_OPEN' | 'SCREEN_VIEW' | 'CUSTOM_EVENT';
 
@@ -807,6 +850,22 @@ export interface InAppMessage {
   buttons: InAppButton[];
   /** Present only on FORM and RATING. Never carries a destination key. */
   fields: InAppField[];
+  /** Present only on CUSTOM_HTML. */
+  customHtml: InAppCustomHtml | null;
+}
+
+export interface InAppCustomHtml {
+  source: 'INLINE' | 'URL';
+  html: string | null;
+  url: string | null;
+  /**
+   * Whether the sandbox grants the frame script at all.
+   *
+   * A capability the renderer withholds, not a request the markup can make — markup authored
+   * without script cannot turn script on for itself.
+   */
+  allowJavaScript: boolean;
+  overlayStyle: 'TRANSPARENT' | 'DARK';
 }
 
 export type InAppFieldType =

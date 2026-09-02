@@ -21,5 +21,13 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     setupFiles: ['./test/setup.ts'],
+    environmentOptions: {
+      // The custom-HTML renderer builds real iframes, and happy-dom otherwise
+      // tries to FETCH a `src` and execute a `srcdoc` for each one — so the
+      // suite would make outbound requests and run test fixture markup. The
+      // element and its `contentWindow` still exist, which is all the sandbox
+      // and bridge assertions need.
+      happyDOM: { settings: { disableIframePageLoading: true } },
+    },
   },
 });

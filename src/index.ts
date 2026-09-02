@@ -537,6 +537,13 @@ function makeRenderer(
         onSubmit: (submission) => {
           void inapp.recordSubmit(message, submission);
         },
+        // A custom-HTML message asking to record an event of its own. It goes
+        // through the same `track()` the host page uses, so it is subject to
+        // the same opt-out and the same queue — a sandboxed frame gets no
+        // shortcut into the pipeline.
+        onCustomEvent: (name) => {
+          void track(name);
+        },
         onDismiss: (visibleSeconds) => {
           void inapp.recordDismiss(message, visibleSeconds);
           inapp.releaseActive();

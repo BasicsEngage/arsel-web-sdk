@@ -19,6 +19,13 @@ const DEFAULT_Z_INDEX = 2_147_483_000;
 const MIN_TAP_TARGET_PX = 44;
 /** Matches DEFAULT_IN_APP_RATING_SCALE on the server. */
 const DEFAULT_RATING_SCALE = 5;
+/** Bounds on anything crossing the bridge from untrusted markup. */
+const MAX_BRIDGE_FIELDS = 20;
+const MAX_BRIDGE_KEY_CHARS = 64;
+const MAX_BRIDGE_VALUE_CHARS = 500;
+const MIN_SANDBOX_HEIGHT_PX = 80;
+/** A frame may not grow past this share of the viewport, whatever it asks for. */
+const MAX_SANDBOX_VIEWPORT_SHARE = 0.9;
 const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
 /** Above this relative luminance a background is treated as light. */
 const LIGHT_LUMINANCE = 0.6;
@@ -36,6 +43,8 @@ export interface ViewCallbacks {
   onButton(button: InAppButton): void;
   /** Answers keyed by `fieldId`. Only ever called for FORM and RATING. */
   onSubmit(submission: Record<string, string>): void;
+  /** A custom-HTML message asked to record an event of its own. */
+  onCustomEvent(name: string): void;
   onDismiss(visibleSeconds: number): void;
 }
 
@@ -57,6 +66,7 @@ const DIALOG_LAYOUTS: readonly string[] = [
   'ALERT',
   'FORM',
   'RATING',
+  'CUSTOM_HTML',
 ];
 
 /** Layouts that collect answers, and so render inputs instead of a bare panel. */
@@ -111,9 +121,13 @@ export function render(
   if (colors.text) panel.style.setProperty('color', colors.text);
 
   let closed = false;
+  // Listeners that outlive the panel's own nodes and so are not collected by
+  // removing the host — today only the custom-HTML bridge.
+  const teardowns: (() => void)[] = [];
   const close = (reason: 'dismiss' | 'button' | 'expired'): void => {
     if (closed) return;
     closed = true;
+    for (const dispose of teardowns) dispose();
     document.removeEventListener('keydown', onEscape, true);
     host.remove();
     // Restore focus to whatever had it, unless that node has since left the
@@ -131,7 +145,19 @@ export function render(
     close('dismiss');
   };
 
-  if (message.layout === 'IMAGE_ONLY' && message.content.imageUrl) {
+  const custom = message.layout === 'CUSTOM_HTML' ? message.customHtml : null;
+
+  if (custom) {
+    panel.classList.add('panel--custom');
+    // The headline is never drawn for this layout — the markup owns everything
+    // visible — but it still has to name the dialog, because the frame's
+    // contents are opaque to the host and an unnamed dialog is unusable with a
+    // screen reader.
+    panel.setAttribute('aria-label', message.content.headline);
+    panel.removeAttribute('aria-labelledby');
+    panel.removeAttribute('aria-describedby');
+    panel.append(buildSandbox(custom, message, callbacks, close, teardowns));
+  } else if (message.layout === 'IMAGE_ONLY' && message.content.imageUrl) {
     panel.append(buildImageOnly(message, () => primaryAction(message)));
   } else {
     if (message.content.imageUrl && !IMAGELESS_LAYOUTS.includes(message.layout)) {
@@ -176,7 +202,8 @@ export function render(
 
   if (isModal) {
     const backdrop = document.createElement('div');
-    backdrop.className = 'backdrop';
+    backdrop.className =
+      custom?.overlayStyle === 'TRANSPARENT' ? 'backdrop clear' : 'backdrop';
     // Only dismissable by backdrop when the author allowed a close affordance;
     // otherwise a stray click destroys a message they meant to be deliberate.
     if (message.content.showCloseButton) {
@@ -270,6 +297,194 @@ function buildImageOnly(
  * button row does not need to know what a field is. Answers come back keyed by
  * `fieldId`; the SDK never receives a destination, so it cannot send one.
  */
+/**
+ * Renders author-supplied markup inside a null-origin iframe.
+ *
+ * This is the only place the SDK draws content it did not construct, and the sandbox is the whole
+ * of the security design. `allow-scripts` WITHOUT `allow-same-origin` gives the frame an opaque
+ * origin: script runs, but it cannot read the host page's DOM, cookies or storage, and cannot make
+ * same-origin requests back to the customer's site. The two are never granted together — that
+ * combination lets a frame strip its own sandbox attribute, which is the same as no sandbox at all.
+ *
+ * Withheld deliberately: `allow-top-navigation`, so the markup cannot redirect the customer's site
+ * out from under the visitor; and `allow-popups`, `allow-modals`, `allow-forms`. The frame reaches
+ * the page only through the bridge below.
+ *
+ * When the author did not enable JavaScript the sandbox is left fully restricted and the frame is
+ * inert markup — a far smaller surface, and enough for most creatives.
+ */
+function buildSandbox(
+  custom: NonNullable<InAppMessage['customHtml']>,
+  message: InAppMessage,
+  callbacks: ViewCallbacks,
+  close: (reason: 'dismiss' | 'button' | 'expired') => void,
+  teardowns: (() => void)[],
+): HTMLIFrameElement {
+  const frame = document.createElement('iframe');
+  frame.className = 'sandbox';
+  frame.title = message.content.headline;
+  frame.setAttribute('sandbox', custom.allowJavaScript ? 'allow-scripts' : '');
+  // Belt and braces with the sandbox: a frame that somehow ran script still
+  // gets nothing from the browser's own permission surface.
+  frame.setAttribute('allow', '');
+  frame.referrerPolicy = 'no-referrer';
+
+  if (custom.source === 'URL' && custom.url) {
+    frame.src = custom.url;
+  } else if (custom.html) {
+    // srcdoc rather than a blob: URL — a blob inherits the creating origin,
+    // which would undo the opaque origin the sandbox exists to create.
+    frame.srcdoc = custom.html;
+  }
+
+  if (custom.allowJavaScript) {
+    teardowns.push(attachBridge(frame, message, callbacks, close));
+  }
+  return frame;
+}
+
+/**
+ * The only channel from the markup back to the SDK, and the reason the frame needs no privileges.
+ *
+ * Every message is checked against the frame's own window before it is read, so another frame, the
+ * host page, or an extension cannot forge one — an origin check would be worthless here, because a
+ * sandboxed frame's origin is the string "null" and every such frame shares it.
+ *
+ * Nothing from the frame is evaluated, written into the page, or followed as a destination. A
+ * button is named by id and resolved against the CAMPAIGN's own buttons, so the frame can ask for
+ * an action the author defined but can never invent one — the same rule that keeps `fieldKey` off
+ * the wire for forms.
+ *
+ * Returns its own disposer: a listener that outlived its frame would keep the whole view alive and
+ * would answer whichever frame next occupied the window.
+ */
+function attachBridge(
+  frame: HTMLIFrameElement,
+  message: InAppMessage,
+  callbacks: ViewCallbacks,
+  close: (reason: 'dismiss' | 'button' | 'expired') => void,
+): () => void {
+  const onMessage = (event: MessageEvent): void => {
+    if (event.source !== frame.contentWindow) return;
+    if (!isBridgeMessage(event.data)) return;
+    const payload = event.data;
+
+    switch (payload.type) {
+      case 'arsel:dismiss':
+        close('dismiss');
+        return;
+      case 'arsel:track': {
+        const name = typeof payload.event === 'string' ? payload.event.trim() : '';
+        if (name) callbacks.onCustomEvent(name.slice(0, MAX_BRIDGE_KEY_CHARS));
+        return;
+      }
+      case 'arsel:button': {
+        const button = message.buttons.find(
+          (candidate) => candidate.buttonId === payload.buttonId,
+        );
+        if (button) activateButton(button, callbacks, close);
+        return;
+      }
+      case 'arsel:submit': {
+        const answers = readBridgeSubmission(payload.submission);
+        if (answers) callbacks.onSubmit(answers);
+        return;
+      }
+      case 'arsel:resize':
+        resizeSandbox(frame, payload.height);
+        return;
+      default:
+        return;
+    }
+  };
+
+  window.addEventListener('message', onMessage);
+  return () => window.removeEventListener('message', onMessage);
+}
+
+/**
+ * Runs a campaign-defined button asked for by the frame.
+ *
+ * The button row does not go through here: there a URL action is a real `<a target="_blank">`, so
+ * the browser navigates and no script has to. From the bridge there is no anchor, and a popup
+ * opened out of a message handler carries no user gesture — so a blocked `window.open` falls back
+ * to the current tab rather than silently doing nothing.
+ */
+function activateButton(
+  button: InAppButton,
+  callbacks: ViewCallbacks,
+  close: (reason: 'dismiss' | 'button' | 'expired') => void,
+): void {
+  // Enqueued before any navigation: the queue survives an unload, the click
+  // handler does not.
+  if (button.action !== 'DISMISS') callbacks.onButton(button);
+  const destination =
+    button.action === 'URL' || button.action === 'DEEP_LINK'
+      ? safeDestination(button.value)
+      : null;
+
+  close(button.action === 'DISMISS' ? 'dismiss' : 'button');
+  if (!destination) return;
+
+  if (button.action === 'DEEP_LINK') {
+    location.assign(destination);
+    return;
+  }
+  const opened = window.open(destination, '_blank', 'noopener,noreferrer');
+  if (!opened) location.assign(destination);
+}
+
+/**
+ * Honours a height the frame asks for, clamped.
+ *
+ * Without this a custom message is stuck at whatever default the CSS picked, because a null-origin
+ * frame's content height is unreadable from the host. The clamp is what makes obeying it safe: an
+ * unbounded height is a full-page overlay the visitor cannot scroll past.
+ */
+function resizeSandbox(frame: HTMLIFrameElement, requested: unknown): void {
+  if (typeof requested !== 'number' || !Number.isFinite(requested)) return;
+  const ceiling = window.innerHeight * MAX_SANDBOX_VIEWPORT_SHARE;
+  const height = Math.min(Math.max(requested, MIN_SANDBOX_HEIGHT_PX), ceiling);
+  frame.style.setProperty('height', `${Math.round(height)}px`);
+}
+
+interface BridgeMessage {
+  type: string;
+  event?: unknown;
+  buttonId?: unknown;
+  submission?: unknown;
+  height?: unknown;
+}
+
+function isBridgeMessage(value: unknown): value is BridgeMessage {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === 'string'
+  );
+}
+
+/**
+ * Bounded before it reaches the queue. The frame is untrusted, so a submission of arbitrary size or
+ * shape is refused here rather than enqueued and rejected a round trip later.
+ */
+function readBridgeSubmission(value: unknown): Record<string, string> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0 || entries.length > MAX_BRIDGE_FIELDS) return null;
+
+  const answers: Record<string, string> = {};
+  for (const [key, answer] of entries) {
+    if (typeof answer !== 'string') return null;
+    if (!key || key.length > MAX_BRIDGE_KEY_CHARS) return null;
+    answers[key] = answer.slice(0, MAX_BRIDGE_VALUE_CHARS);
+  }
+  return answers;
+}
+
 function buildFieldSet(
   message: InAppMessage,
   panel: HTMLElement,
@@ -822,6 +1037,28 @@ const CSS_TEXT = `
 .rating-input:checked ~ .rating-face,
 .rating-option:hover .rating-face { opacity: 1; }
 .rating-input:focus-visible ~ .rating-face { outline: 2px solid currentColor; outline-offset: 2px; }
+:host([data-layout="CUSTOM_HTML"]) .panel {
+  inset-inline-start: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 32px), 420px);
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+:host([dir="rtl"][data-layout="CUSTOM_HTML"]) .panel {
+  transform: translate(50%, -50%);
+}
+.backdrop.clear { background: transparent; }
+.sandbox {
+  display: block;
+  width: 100%;
+  height: 420px;
+  max-height: calc(100vh - 32px);
+  border: 0;
+  background: transparent;
+}
+.panel--custom .buttons { padding: 12px; }
 :host([data-layout="IMAGE_ONLY"]) .panel {
   inset-inline-start: 50%;
   top: 50%;

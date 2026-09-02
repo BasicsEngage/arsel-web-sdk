@@ -239,6 +239,44 @@ describe('in-app messaging', () => {
       expect(inapp.snapshot().messages).toBe(1);
     });
 
+    it('drops a custom-html message whose source carries no payload', async () => {
+      // Not degraded to a bare headline panel: the author designed markup, and a stray text
+      // modal in its place is worse than the message not appearing.
+      stubFetch(
+        respond(
+          200,
+          bundle([
+            message({
+              layout: 'CUSTOM_HTML',
+              customHtml: { source: 'INLINE', url: 'https://a.test/x' },
+            }),
+          ]),
+        ),
+      );
+
+      await inapp.start(false);
+
+      expect(inapp.snapshot().messages).toBe(0);
+    });
+
+    it('keeps a custom-html message with usable markup', async () => {
+      stubFetch(
+        respond(
+          200,
+          bundle([
+            message({
+              layout: 'CUSTOM_HTML',
+              customHtml: { source: 'INLINE', html: '<p>hi</p>' },
+            }),
+          ]),
+        ),
+      );
+
+      await inapp.start(false);
+
+      expect(inapp.snapshot().messages).toBe(1);
+    });
+
     it('drops a message missing a required field', async () => {
       stubFetch(
         respond(200, bundle([message({ content: { body: 'no headline' } })])),

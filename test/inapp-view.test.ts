@@ -36,6 +36,7 @@ function message(overrides: Partial<InAppMessage> = {}): InAppMessage {
     content: { headline: 'Headline', body: 'Body', showCloseButton: true },
     buttons: [],
     fields: [],
+    customHtml: null,
     ...overrides,
   };
 }
@@ -45,12 +46,14 @@ function callbacks(): ViewCallbacks & {
   clicks: string[];
   submissions: Record<string, string>[];
   dismissals: number;
+  customEvents: string[];
 } {
   const spy = {
     impressions: 0,
     clicks: [] as string[],
     submissions: [] as Record<string, string>[],
     dismissals: 0,
+    customEvents: [] as string[],
     onImpression() {
       spy.impressions += 1;
     },
@@ -62,6 +65,9 @@ function callbacks(): ViewCallbacks & {
     },
     onDismiss() {
       spy.dismissals += 1;
+    },
+    onCustomEvent(name: string) {
+      spy.customEvents.push(name);
     },
   };
   return spy;
@@ -661,4 +667,288 @@ describe('in-app renderer', () => {
     });
   });
 
+  describe('CUSTOM_HTML', () => {
+    function customMessage(
+      custom: Partial<NonNullable<InAppMessage['customHtml']>> = {},
+      overrides: Partial<InAppMessage> = {},
+    ): InAppMessage {
+      return message({
+        layout: 'CUSTOM_HTML',
+        customHtml: {
+          source: 'INLINE',
+          html: '<p>hello</p>',
+          url: null,
+          allowJavaScript: false,
+          overlayStyle: 'DARK',
+          ...custom,
+        },
+        ...overrides,
+      });
+    }
+
+    function sandboxOf(handle: { root: ShadowRoot }): HTMLIFrameElement {
+      return handle.root.querySelector('iframe.sandbox') as HTMLIFrameElement;
+    }
+
+    it('never grants allow-same-origin alongside allow-scripts', () => {
+      // The one combination that voids the sandbox entirely: a frame with both
+      // can reach into the host page and strip its own sandbox attribute.
+      const handle = render(
+        customMessage({ allowJavaScript: true }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      const sandbox = sandboxOf(handle).getAttribute('sandbox') ?? '';
+      expect(sandbox).toBe('allow-scripts');
+      expect(sandbox).not.toContain('allow-same-origin');
+    });
+
+    it('withholds allow-scripts when the author did not enable JavaScript', () => {
+      const handle = render(customMessage(), OPTIONS, callbacks());
+
+      expect(sandboxOf(handle).getAttribute('sandbox')).toBe('');
+    });
+
+    it('withholds top-navigation and popups even with script enabled', () => {
+      // Either one lets the markup take the visitor off the customer's site.
+      const handle = render(
+        customMessage({ allowJavaScript: true }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      const sandbox = sandboxOf(handle).getAttribute('sandbox') ?? '';
+      expect(sandbox).not.toContain('allow-top-navigation');
+      expect(sandbox).not.toContain('allow-popups');
+      expect(sandbox).not.toContain('allow-forms');
+    });
+
+    it('loads inline markup through srcdoc, never a blob URL', () => {
+      // A blob: URL inherits the creating origin, which would undo the opaque
+      // origin the sandbox exists to create.
+      const handle = render(
+        customMessage({ html: '<h1>Sale</h1>' }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      const frame = sandboxOf(handle);
+      expect(frame.getAttribute('srcdoc')).toBe('<h1>Sale</h1>');
+      expect(frame.getAttribute('src')).toBeNull();
+    });
+
+    it('loads a URL source by src and ships no markup', () => {
+      const handle = render(
+        customMessage({
+          source: 'URL',
+          html: null,
+          url: 'https://cdn.example.com/a.html',
+        }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      const frame = sandboxOf(handle);
+      expect(frame.getAttribute('src')).toBe('https://cdn.example.com/a.html');
+      expect(frame.getAttribute('srcdoc')).toBeNull();
+    });
+
+    it('names the dialog even though no headline is drawn', () => {
+      // aria-labelledby would point at a heading this layout never renders,
+      // leaving the dialog unnamed to a screen reader.
+      const handle = render(customMessage(), OPTIONS, callbacks());
+
+      const panel = handle.root.querySelector('.panel') as HTMLElement;
+      expect(panel.getAttribute('role')).toBe('dialog');
+      expect(panel.getAttribute('aria-label')).toBe('Headline');
+      expect(panel.getAttribute('aria-labelledby')).toBeNull();
+    });
+
+    it('keeps an escape route when the markup provides none', () => {
+      const handle = render(customMessage(), OPTIONS, callbacks());
+
+      expect(handle.root.querySelector('button.close')).not.toBeNull();
+    });
+
+    describe('bridge', () => {
+      function post(handle: { root: ShadowRoot }, data: unknown): void {
+        const frame = sandboxOf(handle);
+        // happy-dom gives the frame a real contentWindow; dispatching with it
+        // as `source` is exactly what a postMessage from inside would produce.
+        window.dispatchEvent(
+          new MessageEvent('message', { data, source: frame.contentWindow }),
+        );
+      }
+
+      it('ignores messages that did not come from the frame', () => {
+        // The forgery case: any other window on the page posting the same shape.
+        const spy = callbacks();
+        render(customMessage({ allowJavaScript: true }), OPTIONS, spy);
+
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'arsel:track', event: 'forged' },
+            source: window,
+          }),
+        );
+
+        expect(spy.customEvents).toEqual([]);
+      });
+
+      it('is not attached at all when JavaScript is off', () => {
+        const spy = callbacks();
+        const handle = render(customMessage(), OPTIONS, spy);
+
+        post(handle, { type: 'arsel:track', event: 'sneaky' });
+
+        expect(spy.customEvents).toEqual([]);
+      });
+
+      it('records an event the markup asks for', () => {
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+
+        post(handle, { type: 'arsel:track', event: 'wheel_spun' });
+
+        expect(spy.customEvents).toEqual(['wheel_spun']);
+      });
+
+      it('runs only buttons the campaign itself defines', () => {
+        // The frame names a button; it does not supply one. A destination the
+        // markup invented could never reach location.assign this way.
+        const spy = callbacks();
+        const handle = render(
+          customMessage(
+            { allowJavaScript: true },
+            {
+              buttons: [
+                {
+                  buttonId: 'cta',
+                  label: 'Go',
+                  action: 'CUSTOM_EVENT',
+                  value: 'claimed',
+                  style: 'PRIMARY',
+                },
+              ],
+            },
+          ),
+          OPTIONS,
+          spy,
+        );
+
+        post(handle, { type: 'arsel:button', buttonId: 'not-a-button' });
+        expect(spy.clicks).toEqual([]);
+
+        post(handle, { type: 'arsel:button', buttonId: 'cta' });
+        expect(spy.clicks).toEqual(['cta']);
+      });
+
+      it('refuses a submission that is not a flat map of strings', () => {
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+
+        post(handle, { type: 'arsel:submit', submission: { a: { nested: 1 } } });
+        post(handle, { type: 'arsel:submit', submission: ['a', 'b'] });
+        post(handle, { type: 'arsel:submit', submission: {} });
+
+        expect(spy.submissions).toEqual([]);
+      });
+
+      it('refuses a submission with more fields than any form has', () => {
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+        const oversized: Record<string, string> = {};
+        for (let i = 0; i < 50; i += 1) oversized[`f${i}`] = 'x';
+
+        post(handle, { type: 'arsel:submit', submission: oversized });
+
+        expect(spy.submissions).toEqual([]);
+      });
+
+      it('truncates an oversized answer rather than dropping the submission', () => {
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+
+        post(handle, {
+          type: 'arsel:submit',
+          submission: { note: 'x'.repeat(5000) },
+        });
+
+        expect(spy.submissions[0]?.note).toHaveLength(500);
+      });
+
+      it('clamps a height the frame asks for', () => {
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+        const frame = sandboxOf(handle);
+
+        post(handle, { type: 'arsel:resize', height: 320 });
+        expect(frame.style.height).toBe('320px');
+
+        // An unbounded height is a full-page overlay the visitor cannot escape.
+        post(handle, { type: 'arsel:resize', height: 999_999 });
+        const clamped = parseInt(frame.style.height, 10);
+        expect(clamped).toBeLessThanOrEqual(window.innerHeight);
+
+        post(handle, { type: 'arsel:resize', height: 'tall' });
+        expect(frame.style.height).toBe(`${clamped}px`);
+      });
+
+      it('stops listening once the message closes', () => {
+        // A listener outliving its frame answers whichever frame next occupies
+        // the window, and keeps the whole view handle alive.
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+        const frame = sandboxOf(handle);
+
+        handle.close('dismiss');
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'arsel:track', event: 'after_close' },
+            source: frame.contentWindow,
+          }),
+        );
+
+        expect(spy.customEvents).toEqual([]);
+      });
+
+      it('dismisses on request from the markup', () => {
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+
+        post(handle, { type: 'arsel:dismiss' });
+
+        expect(spy.dismissals).toBe(1);
+      });
+    });
+  });
 });
