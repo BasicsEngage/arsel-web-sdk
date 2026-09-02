@@ -39,12 +39,24 @@ const DEFAULT_RULES = {
   delaySeconds: 0,
 };
 
-/** FULLSCREEN is excluded server-side for web and never renderable here. */
+/**
+ * Layouts this build can draw. FULLSCREEN is absent because it is filtered
+ * server-side for web and never renderable here.
+ *
+ * This list is the client half of the server's `IN_APP_SUPPORTED_LAYOUTS`, and
+ * the two have to be extended together: the server gates on the SDK version it
+ * is told, but a build that receives a layout missing from this list drops the
+ * message with only a debug line to show for it.
+ */
 const WEB_LAYOUTS: readonly string[] = [
   'MODAL',
   'BANNER_TOP',
   'BANNER_BOTTOM',
   'IMAGE_ONLY',
+  'HALF_INTERSTITIAL',
+  'ALERT',
+  'FORM',
+  'RATING',
 ];
 
 let started = false;
@@ -323,6 +335,12 @@ function parseMessage(input: unknown): InAppMessage | null {
       // Absent means "not suppressed"; only an explicit false hides it.
       showCloseButton: content.showCloseButton !== false,
     },
+    // `fields` arrives as null, not [], on every layout that collects nothing.
+    fields: Array.isArray(input.fields)
+      ? input.fields
+          .map(parseField)
+          .filter((field): field is InAppField => field !== null)
+      : [],
     // `buttons` arrives as null, not [], when a campaign has none.
     buttons: Array.isArray(input.buttons)
       ? input.buttons
@@ -346,6 +364,50 @@ function parseButton(input: unknown): InAppButton | null {
     value: str(input.value),
     style: str(input.style) === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY',
   };
+}
+
+const FIELD_TYPES: readonly string[] = [
+  'text',
+  'email',
+  'tel',
+  'dropdown',
+  'radio',
+  'checkbox',
+  'rating',
+];
+
+/**
+ * An unknown type is dropped rather than guessed at. Rendering a field the SDK
+ * does not understand as a text box would collect an answer the server then
+ * refuses, which reads to the user as the form being broken.
+ */
+function parseField(input: unknown): InAppField | null {
+  if (!isRecord(input)) return null;
+  const fieldId = str(input.fieldId);
+  const label = str(input.label);
+  const type = str(input.type);
+  if (!fieldId || !label || !type || !FIELD_TYPES.includes(type)) return null;
+
+  return {
+    fieldId,
+    type: type as InAppFieldType,
+    label,
+    required: input.required === true,
+    placeholder: str(input.placeholder) ?? null,
+    options: Array.isArray(input.options)
+      ? input.options
+          .map(parseFieldOption)
+          .filter((option): option is InAppFieldOption => option !== null)
+      : null,
+    scale: num(input.scale) ?? null,
+  };
+}
+
+function parseFieldOption(input: unknown): InAppFieldOption | null {
+  if (!isRecord(input)) return null;
+  const label = str(input.label);
+  const value = str(input.value);
+  return label && value ? { label, value } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +586,20 @@ export async function recordClick(
   await enqueueBeacon(message, 'clicked', { buttonId });
 }
 
+/**
+ * Answers are keyed by `fieldId`, never by a destination.
+ *
+ * The bundle does not carry `fieldKey` at all, so the SDK could not name a
+ * destination even if it wanted to — the server resolves each id against the
+ * campaign it stored.
+ */
+export async function recordSubmit(
+  message: InAppMessage,
+  submission: Record<string, string>,
+): Promise<void> {
+  await enqueueBeacon(message, 'submitted', { submission });
+}
+
 export async function recordDismiss(
   message: InAppMessage,
   visibleSeconds: number,
@@ -566,6 +642,7 @@ async function enqueueBeacon(
     buttonId?: string;
     visibleSeconds?: number;
     triggerEventName?: string | null;
+    submission?: Record<string, string>;
   },
 ): Promise<void> {
   const body: Record<string, unknown> = {
@@ -582,6 +659,9 @@ async function enqueueBeacon(
     body.visibleSeconds = extra.visibleSeconds;
   }
   if (extra.triggerEventName) body.triggerEventName = extra.triggerEventName;
+  if (extra.submission && Object.keys(extra.submission).length > 0) {
+    body.submission = extra.submission;
+  }
 
   await addEvent(QUEUE.inAppBeacons, JSON.stringify(body));
   await trimQueue(QUEUE.inAppBeacons, MAX_QUEUED_BEACONS);
@@ -680,7 +760,12 @@ export type InAppTriggerType = 'APP_OPEN' | 'SCREEN_VIEW' | 'CUSTOM_EVENT';
 
 export type InAppAction = 'DEEP_LINK' | 'URL' | 'DISMISS' | 'CUSTOM_EVENT';
 
-type BeaconType = 'impression' | 'clicked' | 'dismissed' | 'expired';
+type BeaconType =
+  | 'impression'
+  | 'clicked'
+  | 'dismissed'
+  | 'expired'
+  | 'submitted';
 
 export interface InAppButton {
   buttonId: string;
@@ -720,6 +805,33 @@ export interface InAppMessage {
   layout: InAppLayout;
   content: InAppContent;
   buttons: InAppButton[];
+  /** Present only on FORM and RATING. Never carries a destination key. */
+  fields: InAppField[];
+}
+
+export type InAppFieldType =
+  | 'text'
+  | 'email'
+  | 'tel'
+  | 'dropdown'
+  | 'radio'
+  | 'checkbox'
+  | 'rating';
+
+export interface InAppFieldOption {
+  label: string;
+  value: string;
+}
+
+export interface InAppField {
+  /** What an answer is keyed by. The server owns where it lands. */
+  fieldId: string;
+  type: InAppFieldType;
+  label: string;
+  required: boolean;
+  placeholder: string | null;
+  options: InAppFieldOption[] | null;
+  scale: number | null;
 }
 
 interface DeviceAuth {

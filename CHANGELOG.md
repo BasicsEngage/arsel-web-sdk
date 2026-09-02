@@ -9,6 +9,17 @@ Breaking changes to the public surface wait for a major release, and are listed 
 
 ### Added
 
+- **Form and rating messages.** The `FORM` and `RATING` layouts render inputs — text,
+  email, tel, dropdown, radio, checkbox and a star/NPS rating — and report the answers
+  on a new `submitted` beacon. A required field that is empty blocks submission and
+  focuses itself rather than sending a partial answer.
+
+  Answers are keyed by `fieldId`. The bundle deliberately does not carry the destination
+  property, so the SDK cannot name where an answer lands; the API resolves each id
+  against the campaign it stored. The API withholds both layouts from any web build
+  below 1.4.0.
+
+
 - **Two in-app layouts: `HALF_INTERSTITIAL` and `ALERT`.** The first anchors the panel to
   the lower half so the app stays partly visible; the second is the compact, centred,
   text-only alert shape. Both behave as dialogs — backdrop, `role="dialog"`, focus trap —

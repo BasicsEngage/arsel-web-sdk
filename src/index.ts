@@ -534,6 +534,9 @@ function makeRenderer(
             void track(button.value);
           }
         },
+        onSubmit: (submission) => {
+          void inapp.recordSubmit(message, submission);
+        },
         onDismiss: (visibleSeconds) => {
           void inapp.recordDismiss(message, visibleSeconds);
           inapp.releaseActive();

@@ -35,6 +35,7 @@ function message(overrides: Partial<InAppMessage> = {}): InAppMessage {
     layout: 'MODAL',
     content: { headline: 'Headline', body: 'Body', showCloseButton: true },
     buttons: [],
+    fields: [],
     ...overrides,
   };
 }
@@ -42,17 +43,22 @@ function message(overrides: Partial<InAppMessage> = {}): InAppMessage {
 function callbacks(): ViewCallbacks & {
   impressions: number;
   clicks: string[];
+  submissions: Record<string, string>[];
   dismissals: number;
 } {
   const spy = {
     impressions: 0,
     clicks: [] as string[],
+    submissions: [] as Record<string, string>[],
     dismissals: 0,
     onImpression() {
       spy.impressions += 1;
     },
     onButton(button: { buttonId: string }) {
       spy.clicks.push(button.buttonId);
+    },
+    onSubmit(submission: Record<string, string>) {
+      spy.submissions.push(submission);
     },
     onDismiss() {
       spy.dismissals += 1;
@@ -514,6 +520,144 @@ describe('in-app renderer', () => {
       );
 
       expect(handle.root.querySelector('img')).not.toBeNull();
+    });
+  });
+
+
+  describe('form and rating', () => {
+    const submitButton = {
+      buttonId: 'submit',
+      label: 'Send',
+      action: 'CUSTOM_EVENT' as const,
+      value: 'form_submitted',
+      style: 'PRIMARY' as const,
+    };
+
+    const textField = {
+      fieldId: 'name',
+      type: 'text' as const,
+      label: 'Your name',
+      required: true,
+      placeholder: null,
+      options: null,
+      scale: null,
+    };
+
+    const formMessage = (fields: unknown[]) =>
+      message({
+        layout: 'FORM',
+        buttons: [submitButton],
+        fields,
+      } as never);
+
+    it('draws an input per field', () => {
+      const handle = render(formMessage([textField]), OPTIONS, callbacks());
+
+      expect(handle.root.querySelectorAll('.field')).toHaveLength(1);
+      expect(handle.root.querySelector('.field-input')).not.toBeNull();
+    });
+
+    it('submits answers keyed by fieldId, never by a destination', () => {
+      // The bundle never carries fieldKey, so the SDK could not name a
+      // destination even if it tried — the server resolves the id.
+      const spy = callbacks();
+      const handle = render(formMessage([textField]), OPTIONS, spy);
+
+      const input = handle.root.querySelector('.field-input') as HTMLInputElement;
+      input.value = 'Layla';
+      (handle.root.querySelector('button.cta') as HTMLElement).click();
+
+      expect(spy.submissions).toEqual([{ name: 'Layla' }]);
+    });
+
+    it('refuses to submit while a required field is empty', () => {
+      const spy = callbacks();
+      const handle = render(formMessage([textField]), OPTIONS, spy);
+
+      (handle.root.querySelector('button.cta') as HTMLElement).click();
+
+      expect(spy.submissions).toEqual([]);
+      // The message stays open so the person can see what is missing.
+      expect(document.querySelector('[data-arsel-inapp]')).not.toBeNull();
+    });
+
+    it('submits without an optional field the person skipped', () => {
+      const optional = { ...textField, fieldId: 'note', required: false };
+      const spy = callbacks();
+      const handle = render(formMessage([optional]), OPTIONS, spy);
+
+      (handle.root.querySelector('button.cta') as HTMLElement).click();
+
+      expect(spy.submissions).toEqual([{}]);
+    });
+
+    it('draws stars up to a scale of 5 and numerals beyond', () => {
+      const rating = (scale: number) => ({
+        fieldId: 'score',
+        type: 'rating' as const,
+        label: 'Rate us',
+        required: true,
+        placeholder: null,
+        options: null,
+        scale,
+      });
+
+      const stars = render(formMessage([rating(5)]), OPTIONS, callbacks());
+      expect(stars.root.querySelectorAll('.rating-option')).toHaveLength(5);
+      expect(stars.root.querySelector('.rating-face')?.textContent).toBe('★');
+      stars.close('dismiss');
+
+      const nps = render(formMessage([rating(10)]), OPTIONS, callbacks());
+      expect(nps.root.querySelectorAll('.rating-option')).toHaveLength(10);
+      expect(nps.root.querySelector('.rating-face')?.textContent).toBe('1');
+    });
+
+    it('reports the chosen rating as its number', () => {
+      const rating = {
+        fieldId: 'score',
+        type: 'rating' as const,
+        label: 'Rate us',
+        required: true,
+        placeholder: null,
+        options: null,
+        scale: 5,
+      };
+      const spy = callbacks();
+      const handle = render(formMessage([rating]), OPTIONS, spy);
+
+      const inputs = handle.root.querySelectorAll('.rating-input');
+      (inputs[3] as HTMLInputElement).click();
+      (handle.root.querySelector('button.cta') as HTMLElement).click();
+
+      expect(spy.submissions).toEqual([{ score: '4' }]);
+    });
+
+    it('treats an unticked required checkbox as unanswered', () => {
+      // A consent box that submitted "false" would record a refusal as an
+      // answer and let the form through.
+      const consent = {
+        fieldId: 'optIn',
+        type: 'checkbox' as const,
+        label: 'Email me offers',
+        required: true,
+        placeholder: null,
+        options: null,
+        scale: null,
+      };
+      const spy = callbacks();
+      const handle = render(formMessage([consent]), OPTIONS, spy);
+
+      (handle.root.querySelector('button.cta') as HTMLElement).click();
+
+      expect(spy.submissions).toEqual([]);
+    });
+
+    it('behaves as a dialog, like the other overlay layouts', () => {
+      const handle = render(formMessage([textField]), OPTIONS, callbacks());
+
+      const panel = handle.root.querySelector('.panel') as HTMLElement;
+      expect(panel.getAttribute('role')).toBe('dialog');
+      expect(handle.root.querySelector('.backdrop')).not.toBeNull();
     });
   });
 

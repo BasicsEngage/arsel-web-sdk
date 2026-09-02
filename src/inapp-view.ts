@@ -1,4 +1,4 @@
-import type { InAppButton, InAppMessage } from './inapp';
+import type { InAppButton, InAppField, InAppMessage } from './inapp';
 
 /**
  * The only module in the SDK that touches the DOM.
@@ -17,6 +17,8 @@ import type { InAppButton, InAppMessage } from './inapp';
 
 const DEFAULT_Z_INDEX = 2_147_483_000;
 const MIN_TAP_TARGET_PX = 44;
+/** Matches DEFAULT_IN_APP_RATING_SCALE on the server. */
+const DEFAULT_RATING_SCALE = 5;
 const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
 /** Above this relative luminance a background is treated as light. */
 const LIGHT_LUMINANCE = 0.6;
@@ -32,6 +34,8 @@ export interface ViewOptions {
 export interface ViewCallbacks {
   onImpression(): void;
   onButton(button: InAppButton): void;
+  /** Answers keyed by `fieldId`. Only ever called for FORM and RATING. */
+  onSubmit(submission: Record<string, string>): void;
   onDismiss(visibleSeconds: number): void;
 }
 
@@ -47,7 +51,16 @@ export interface ViewHandle {
  * a strip at the edge of the page must never steal focus from a visitor who
  * is mid-form. IMAGE_ONLY is centred but has no text to label a dialog with.
  */
-const DIALOG_LAYOUTS: readonly string[] = ['MODAL', 'HALF_INTERSTITIAL', 'ALERT'];
+const DIALOG_LAYOUTS: readonly string[] = [
+  'MODAL',
+  'HALF_INTERSTITIAL',
+  'ALERT',
+  'FORM',
+  'RATING',
+];
+
+/** Layouts that collect answers, and so render inputs instead of a bare panel. */
+const INPUT_LAYOUTS: readonly string[] = ['FORM', 'RATING'];
 
 /** ALERT is the OS-alert shape: text and actions only, never an image. */
 const IMAGELESS_LAYOUTS: readonly string[] = ['ALERT'];
@@ -139,8 +152,16 @@ export function render(
     }
   }
 
+  const collectsInput =
+    INPUT_LAYOUTS.includes(message.layout) && message.fields.length > 0;
+  const readAnswers = collectsInput
+    ? buildFieldSet(message, panel, uid)
+    : null;
+
   if (message.buttons.length > 0) {
-    panel.append(buildButtonRow(message, callbacks, close));
+    panel.append(
+      buildButtonRow(message, callbacks, close, readAnswers ?? undefined),
+    );
   }
 
   // If a message somehow arrives with no way out, install one anyway: the
@@ -241,10 +262,239 @@ function buildImageOnly(
   return button;
 }
 
+/**
+ * Draws the message's inputs and returns a reader for their answers.
+ *
+ * The reader returns null when a required field is unanswered, having focused
+ * the first offender — validation lives here rather than in the caller so the
+ * button row does not need to know what a field is. Answers come back keyed by
+ * `fieldId`; the SDK never receives a destination, so it cannot send one.
+ */
+function buildFieldSet(
+  message: InAppMessage,
+  panel: HTMLElement,
+  uid: string,
+): () => Record<string, string> | null {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'fields';
+
+  const readers: {
+    field: InAppField;
+    read: () => string;
+    focus: () => void;
+  }[] = [];
+
+  message.fields.forEach((field, index) => {
+    const fieldUid = `${uid}-f${index}`;
+    const group = document.createElement('div');
+    group.className = 'field';
+
+    if (field.type !== 'checkbox') {
+      const label = document.createElement('label');
+      label.className = 'field-label';
+      label.htmlFor = fieldUid;
+      label.textContent = field.required ? `${field.label} *` : field.label;
+      group.append(label);
+    }
+
+    const control = buildControl(field, fieldUid);
+    group.append(control.element);
+    wrapper.append(group);
+    readers.push({ field, read: control.read, focus: control.focus });
+  });
+
+  panel.append(wrapper);
+
+  return () => {
+    const answers: Record<string, string> = {};
+    let firstInvalid: (() => void) | null = null;
+
+    for (const entry of readers) {
+      const value = entry.read();
+      if (!value) {
+        if (entry.field.required && !firstInvalid) firstInvalid = entry.focus;
+        continue;
+      }
+      answers[entry.field.fieldId] = value;
+    }
+
+    if (firstInvalid) {
+      firstInvalid();
+      return null;
+    }
+    return answers;
+  };
+}
+
+interface FieldControl {
+  element: HTMLElement;
+  /** Empty string means "not answered", whatever the control. */
+  read: () => string;
+  focus: () => void;
+}
+
+function buildControl(field: InAppField, fieldUid: string): FieldControl {
+  if (field.type === 'rating') return buildRating(field, fieldUid);
+  if (field.type === 'checkbox') return buildCheckbox(field, fieldUid);
+  if (field.type === 'dropdown') return buildDropdown(field, fieldUid);
+  if (field.type === 'radio') return buildRadio(field, fieldUid);
+  return buildTextInput(field, fieldUid);
+}
+
+/**
+ * Radio inputs rather than clickable spans: a rating is a single-choice
+ * control, and the native element brings the keyboard support and the
+ * screen-reader semantics that a div cannot be given cheaply.
+ */
+function buildRating(field: InAppField, fieldUid: string): FieldControl {
+  const scale =
+    field.scale && field.scale > 1 ? field.scale : DEFAULT_RATING_SCALE;
+  const group = document.createElement('div');
+  group.className = 'rating';
+  group.setAttribute('role', 'radiogroup');
+  group.setAttribute('aria-label', field.label);
+
+  let selected = '';
+  const inputs: HTMLInputElement[] = [];
+
+  for (let value = 1; value <= scale; value += 1) {
+    const option = document.createElement('label');
+    option.className = 'rating-option';
+
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = fieldUid;
+    input.value = String(value);
+    input.className = 'rating-input';
+    input.setAttribute('aria-label', String(value));
+    input.addEventListener('change', () => {
+      selected = input.value;
+      group.setAttribute('data-selected', selected);
+    });
+
+    const face = document.createElement('span');
+    face.className = 'rating-face';
+    // Stars up to 5, numerals beyond: a ten-star row is unreadable at the
+    // width a message gets, and NPS is conventionally numeric anyway.
+    face.textContent = scale <= 5 ? '★' : String(value);
+
+    option.append(input, face);
+    group.append(option);
+    inputs.push(input);
+  }
+
+  return {
+    element: group,
+    read: () => selected,
+    focus: () => inputs[0]?.focus(),
+  };
+}
+
+function buildTextInput(field: InAppField, fieldUid: string): FieldControl {
+  const input = document.createElement('input');
+  input.id = fieldUid;
+  input.className = 'field-input';
+  input.type =
+    field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'text';
+  if (field.placeholder) input.placeholder = field.placeholder;
+  if (field.required) input.required = true;
+
+  return {
+    element: input,
+    read: () => input.value.trim(),
+    focus: () => input.focus(),
+  };
+}
+
+function buildCheckbox(field: InAppField, fieldUid: string): FieldControl {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'field-check';
+
+  const input = document.createElement('input');
+  input.id = fieldUid;
+  input.type = 'checkbox';
+
+  const text = document.createElement('span');
+  text.textContent = field.required ? `${field.label} *` : field.label;
+
+  wrapper.append(input, text);
+
+  return {
+    element: wrapper,
+    // A required checkbox must be ticked, so an unticked one reads as empty
+    // rather than as "false" — otherwise a consent box would pass validation
+    // while recording a refusal.
+    read: () => (input.checked ? 'true' : field.required ? '' : 'false'),
+    focus: () => input.focus(),
+  };
+}
+
+function buildDropdown(field: InAppField, fieldUid: string): FieldControl {
+  const select = document.createElement('select');
+  select.id = fieldUid;
+  select.className = 'field-input';
+
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = field.placeholder ?? 'Choose…';
+  select.append(blank);
+
+  for (const option of field.options ?? []) {
+    const element = document.createElement('option');
+    element.value = option.value;
+    element.textContent = option.label;
+    select.append(element);
+  }
+
+  return {
+    element: select,
+    read: () => select.value,
+    focus: () => select.focus(),
+  };
+}
+
+function buildRadio(field: InAppField, fieldUid: string): FieldControl {
+  const group = document.createElement('div');
+  group.className = 'field-radios';
+  group.setAttribute('role', 'radiogroup');
+  group.setAttribute('aria-label', field.label);
+
+  let selected = '';
+  const inputs: HTMLInputElement[] = [];
+
+  (field.options ?? []).forEach((option, index) => {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'field-check';
+
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = fieldUid;
+    input.value = option.value;
+    if (index === 0) input.id = fieldUid;
+    input.addEventListener('change', () => {
+      selected = input.value;
+    });
+
+    const text = document.createElement('span');
+    text.textContent = option.label;
+
+    wrapper.append(input, text);
+    group.append(wrapper);
+    inputs.push(input);
+  });
+
+  return {
+    element: group,
+    read: () => selected,
+    focus: () => inputs[0]?.focus(),
+  };
+}
+
 function buildButtonRow(
   message: InAppMessage,
   callbacks: ViewCallbacks,
   close: (reason: 'dismiss' | 'button' | 'expired') => void,
+  readAnswers?: () => Record<string, string> | null,
 ): HTMLElement {
   const row = document.createElement('div');
   row.className = 'buttons';
@@ -254,7 +504,18 @@ function buildButtonRow(
       button.action === 'URL' && safeDestination(button.value)
         ? buildLink(button)
         : buildButton(button);
-    element.addEventListener('click', () => {
+    element.addEventListener('click', (event) => {
+      // A form's non-dismiss button submits. Answers are read BEFORE close(),
+      // which detaches the inputs — and a failed validation aborts the click
+      // entirely, so the message stays open with the problem visible.
+      if (readAnswers && button.action !== 'DISMISS') {
+        const answers = readAnswers();
+        if (!answers) {
+          event.preventDefault();
+          return;
+        }
+        callbacks.onSubmit(answers);
+      }
       // Enqueued BEFORE navigation: a link that unloads the page must already
       // have its click persisted, and the queue survives the unload.
       if (button.action !== 'DISMISS') callbacks.onButton(button);
@@ -511,6 +772,56 @@ const CSS_TEXT = `
 :host([dir="rtl"][data-layout="ALERT"]) .panel {
   transform: translate(50%, -50%);
 }
+:host([data-layout="FORM"]) .panel,
+:host([data-layout="RATING"]) .panel {
+  inset-inline-start: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 32px), 400px);
+}
+:host([dir="rtl"][data-layout="FORM"]) .panel,
+:host([dir="rtl"][data-layout="RATING"]) .panel {
+  transform: translate(50%, -50%);
+}
+.fields { display: flex; flex-direction: column; gap: 12px; margin: 12px 0 4px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field-label { font-size: 13px; font-weight: 500; }
+.field-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid rgba(127, 127, 127, 0.5);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  box-sizing: border-box;
+}
+.field-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.field-radios { display: flex; flex-direction: column; gap: 6px; }
+.rating { display: flex; justify-content: center; gap: 4px; }
+.rating-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  cursor: pointer;
+}
+/* Visually hidden, never display:none — the latter removes it from the
+   accessibility tree and from keyboard focus, which is the whole point of
+   using a real radio here. */
+.rating-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.rating-face { font-size: 24px; line-height: 1; opacity: 0.35; }
+.rating-input:checked ~ .rating-face,
+.rating-option:hover .rating-face { opacity: 1; }
+.rating-input:focus-visible ~ .rating-face { outline: 2px solid currentColor; outline-offset: 2px; }
 :host([data-layout="IMAGE_ONLY"]) .panel {
   inset-inline-start: 50%;
   top: 50%;
