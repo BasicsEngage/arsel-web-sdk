@@ -90,7 +90,7 @@ The SDK emits these itself. Your `track()` cannot create or overwrite them.
 | `arsel.session_start` | a visit begins, or resumes after 30+ minutes away | — |
 | `arsel.session_end` | discovered on the **next** visit, backdated to when the page went away | `duration_seconds` |
 | `arsel.identify` | `identify()` supplied at least one identifier | — |
-| `arsel.screen` | `screen()` was called | `screen_name`, plus whatever you passed |
+| `arsel.screen_view` | `screen()` was called | `screen_name`, plus whatever you passed |
 
 ## Installs
 

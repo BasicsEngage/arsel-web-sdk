@@ -7,6 +7,15 @@ Breaking changes to the public surface wait for a major release, and are listed 
 
 ## [1.2.0] — 2026-09-02
 
+### Changed
+
+- **`screen()` now emits `arsel.screen_view`, not `arsel.screen`.** The Android and
+  iOS SDKs have always used `screen_view`, and the split meant a segment or in-app
+  rule keyed on one name silently never matched the other platform. Renamed here
+  rather than on mobile because two of the three SDKs already agreed, and because
+  `screen()` only shipped in 1.1.0 — the exposure is ten days wide. If you built a
+  segment or automation on `arsel.screen`, repoint it at `arsel.screen_view`.
+
 ### Added
 
 - **`arsel.app_installed`.** Emitted once per browser profile, on the first `init()` the SDK ever
