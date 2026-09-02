@@ -5,7 +5,28 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 Breaking changes to the public surface wait for a major release, and are listed here explicitly.
 
-## [Unreleased]
+## [1.2.0] — 2026-09-02
+
+### Changed
+
+- **`screen()` now emits `arsel.screen_view`, not `arsel.screen`.** The Android and
+  iOS SDKs have always used `screen_view`, and the split meant a segment or in-app
+  rule keyed on one name silently never matched the other platform. Renamed here
+  rather than on mobile because two of the three SDKs already agreed, and because
+  `screen()` only shipped in 1.1.0 — the exposure is ten days wide. If you built a
+  segment or automation on `arsel.screen`, repoint it at `arsel.screen_view`.
+
+### Added
+
+- **`arsel.app_installed`.** Emitted once per browser profile, on the first `init()` the SDK ever
+  runs there, ahead of the first `arsel.session_start`. Carries `sdk_version` and `platform`. A
+  browser has no install step, so this means "the first time we saw this device" — clearing site
+  data or opening a private window resets the store and re-fires it, and web install counts run
+  high by exactly that much.
+
+  **Browsers that already used an older version get no install event.** They are seeded silently on
+  their first load after the upgrade: emitting would have reported the whole existing audience as
+  installs on the day you shipped. Install-based segments start empty and fill forward.
 
 ## [1.1.1] — 2026-08-23
 ### Fixed

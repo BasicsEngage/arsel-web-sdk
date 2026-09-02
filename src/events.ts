@@ -18,8 +18,13 @@ export const RESERVED_PREFIX = 'arsel.';
 export const EVENT_SESSION_START = `${RESERVED_PREFIX}session_start`;
 export const EVENT_SESSION_END = `${RESERVED_PREFIX}session_end`;
 export const EVENT_IDENTIFY = `${RESERVED_PREFIX}identify`;
-/** Screen views share one reserved name; the screen itself is a property. */
-export const SCREEN_EVENT = `${RESERVED_PREFIX}screen`;
+export const EVENT_APP_INSTALLED = `${RESERVED_PREFIX}app_installed`;
+/**
+ * Screen views share one reserved name; the screen itself is a property. Named
+ * to match the Android and iOS SDKs — a segment or in-app rule keyed on it has
+ * to mean the same thing on every platform.
+ */
+export const SCREEN_EVENT = `${RESERVED_PREFIX}screen_view`;
 
 // Mirror `IngestEventDto`'s @Length caps, applied here so the 400 never happens.
 const MAX_EVENT_NAME = 80;
