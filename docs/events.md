@@ -86,9 +86,29 @@ The SDK emits these itself. Your `track()` cannot create or overwrite them.
 
 | Event | When | Properties |
 | --- | --- | --- |
+| `arsel.app_installed` | the first time the SDK ever runs in this browser profile | `sdk_version`, `platform` |
 | `arsel.session_start` | a visit begins, or resumes after 30+ minutes away | — |
 | `arsel.session_end` | discovered on the **next** visit, backdated to when the page went away | `duration_seconds` |
 | `arsel.identify` | `identify()` supplied at least one identifier | — |
+| `arsel.screen` | `screen()` was called | `screen_name`, plus whatever you passed |
+
+## Installs
+
+A browser has no install step, so `arsel.app_installed` means *the first time we ever saw this
+device* — the honest analogue of what the mobile SDKs report, and it fires ahead of the first
+`arsel.session_start` so the install leads the timeline.
+
+Two consequences worth knowing before you build a funnel on it:
+
+> **Clearing site data or opening a private window re-fires it.** The flag lives in the same
+> IndexedDB the rest of the SDK uses, so a wiped profile is a new device by every measure available
+> to a page. Web install counts run high by exactly that much, and nothing inside the page can fix
+> it.
+
+> **Browsers that were already using an older SDK never get one.** They are seeded silently on their
+> first load after upgrading. Emitting instead would have reported the entire existing audience as
+> installs on the day you shipped the upgrade — so "installed in the last 30 days" excludes anyone
+> who arrived before this event existed.
 
 ## Sessions
 

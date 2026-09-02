@@ -137,6 +137,7 @@ export const KEYS = {
   vapidKeyVersion: 'vapid_key_version',
   endpoint: 'endpoint',
   subscriptionStatus: 'subscription_status',
+  installReported: 'install_reported',
   sessionStartedAt: 'session_started_at',
   backgroundedAt: 'backgrounded_at',
   lastResponseCode: 'last_response_code',

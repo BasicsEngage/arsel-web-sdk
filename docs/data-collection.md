@@ -17,6 +17,7 @@ another origin, and nothing is readable cross-origin.
 | `installation_id` | a random UUID naming this browser profile | first push subscribe | — |
 | `device_secret` | authenticates engagements | push registration | — |
 | `vapid_key_version`, `endpoint` | push subscription bookkeeping | push subscribe | — |
+| `install_reported` | that `arsel.app_installed` has been emitted | first `init()` | — |
 | `session_started_at`, `backgrounded_at` | session boundaries | visibility changes | `reset()` |
 | `last_response_*` | diagnostics: status code, path, timestamp | every request | — |
 | *events store* | queued events not yet delivered | `track()` | on delivery |
@@ -68,7 +69,7 @@ Explicitly, because these are the questions that get asked:
 - **No IP-based geolocation, and no Geolocation API.** The SDK never calls `navigator.geolocation`.
 - **No page content.** No DOM scraping, no form values, no keystrokes, no session replay.
 - **No automatic page views.** Nothing is tracked that you did not call `track()` for, other than the
-  three `arsel.*` session and identify events.
+  four `arsel.*` install, session and identify events.
 - **No contact list access.** The client key cannot read anything — it authenticates writes on two
   channels and nothing else.
 - **No cross-site tracking.** Storage is origin-scoped; there is no shared identifier across

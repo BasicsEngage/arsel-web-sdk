@@ -7,6 +7,7 @@ import {
 } from './events';
 import * as inapp from './inapp';
 import { render } from './inapp-view';
+import { hasDeviceIdentity, reportInstall } from './install';
 import * as push from './push';
 import * as session from './session';
 import {
@@ -166,7 +167,10 @@ export function init(config: ArselConfig): Promise<void> {
       set(KEYS.clientKey, config.clientKey),
       set(KEYS.baseUrl, baseUrl),
     ]);
+    // Before anonymousId() mints one, or every returning browser looks new.
+    const alreadyInstalled = await hasDeviceIdentity();
     await anonymousId();
+    await reportInstall(alreadyInstalled);
 
     // Anything tracked before init() moves into the durable queue, in order,
     // with its original timestamps.

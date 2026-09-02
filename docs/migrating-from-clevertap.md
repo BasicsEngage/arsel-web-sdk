@@ -88,6 +88,15 @@ change them, change them everywhere at once — a mixed estate of `Product viewe
 
 Reserved prefixes differ: CleverTap reserves `wzrk_`, we reserve `arsel.`.
 
+### Lifecycle events
+
+CleverTap's `App Installed` is `arsel.app_installed`. On the web it means the first time the SDK
+ever ran in a browser profile — there is no install to observe — so clearing site data re-fires it.
+Browsers that already used an older SDK are seeded silently and never get one, which is why
+install-based segments start empty at cut-over and fill forward.
+
+`App Uninstalled` and `App Version Changed` have no counterpart.
+
 ### Session events
 
 CleverTap emits `Session Concluded` (and App Launched on mobile). We emit `arsel.session_start` and

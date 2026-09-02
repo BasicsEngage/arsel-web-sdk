@@ -18,6 +18,7 @@ export const RESERVED_PREFIX = 'arsel.';
 export const EVENT_SESSION_START = `${RESERVED_PREFIX}session_start`;
 export const EVENT_SESSION_END = `${RESERVED_PREFIX}session_end`;
 export const EVENT_IDENTIFY = `${RESERVED_PREFIX}identify`;
+export const EVENT_APP_INSTALLED = `${RESERVED_PREFIX}app_installed`;
 /** Screen views share one reserved name; the screen itself is a property. */
 export const SCREEN_EVENT = `${RESERVED_PREFIX}screen`;
 
