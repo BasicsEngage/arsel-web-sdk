@@ -541,8 +541,8 @@ function makeRenderer(
         // through the same `track()` the host page uses, so it is subject to
         // the same opt-out and the same queue — a sandboxed frame gets no
         // shortcut into the pipeline.
-        onCustomEvent: (name) => {
-          void track(name);
+        onCustomEvent: (name, properties) => {
+          void track(name, properties);
         },
         onDismiss: (visibleSeconds) => {
           void inapp.recordDismiss(message, visibleSeconds);

@@ -46,14 +46,14 @@ function callbacks(): ViewCallbacks & {
   clicks: string[];
   submissions: Record<string, string>[];
   dismissals: number;
-  customEvents: string[];
+  customEvents: { name: string; properties: Record<string, unknown> }[];
 } {
   const spy = {
     impressions: 0,
     clicks: [] as string[],
     submissions: [] as Record<string, string>[],
     dismissals: 0,
-    customEvents: [] as string[],
+    customEvents: [] as { name: string; properties: Record<string, unknown> }[],
     onImpression() {
       spy.impressions += 1;
     },
@@ -66,8 +66,8 @@ function callbacks(): ViewCallbacks & {
     onDismiss() {
       spy.dismissals += 1;
     },
-    onCustomEvent(name: string) {
-      spy.customEvents.push(name);
+    onCustomEvent(name: string, properties: Record<string, unknown>) {
+      spy.customEvents.push({ name, properties });
     },
   };
   return spy;
@@ -815,7 +815,50 @@ describe('in-app renderer', () => {
 
         post(handle, { type: 'arsel:track', event: 'wheel_spun' });
 
-        expect(spy.customEvents).toEqual(['wheel_spun']);
+        expect(spy.customEvents).toEqual([
+          { name: 'wheel_spun', properties: {} },
+        ]);
+      });
+
+      it('carries event properties, which is how a prize is reported', () => {
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+
+        post(handle, {
+          type: 'arsel:track',
+          event: 'wheel_spun',
+          properties: { prize: '20% off', segment: 3, jackpot: false },
+        });
+
+        expect(spy.customEvents[0]?.properties).toEqual({
+          prize: '20% off',
+          segment: 3,
+          jackpot: false,
+        });
+      });
+
+      it('drops an unusable property but still records the event', () => {
+        // A malformed value must not cost the interaction: the event is what is
+        // being reported, and losing it would hide the interaction entirely.
+        const spy = callbacks();
+        const handle = render(
+          customMessage({ allowJavaScript: true }),
+          OPTIONS,
+          spy,
+        );
+
+        post(handle, {
+          type: 'arsel:track',
+          event: 'wheel_spun',
+          properties: { prize: '20% off', nested: { a: 1 }, nan: NaN },
+        });
+
+        expect(spy.customEvents[0]?.name).toBe('wheel_spun');
+        expect(spy.customEvents[0]?.properties).toEqual({ prize: '20% off' });
       });
 
       it('runs only buttons the campaign itself defines', () => {

@@ -44,7 +44,7 @@ export interface ViewCallbacks {
   /** Answers keyed by `fieldId`. Only ever called for FORM and RATING. */
   onSubmit(submission: Record<string, string>): void;
   /** A custom-HTML message asked to record an event of its own. */
-  onCustomEvent(name: string): void;
+  onCustomEvent(name: string, properties: Record<string, string | number | boolean>): void;
   onDismiss(visibleSeconds: number): void;
 }
 
@@ -375,7 +375,11 @@ function attachBridge(
         return;
       case 'arsel:track': {
         const name = typeof payload.event === 'string' ? payload.event.trim() : '';
-        if (name) callbacks.onCustomEvent(name.slice(0, MAX_BRIDGE_KEY_CHARS));
+        if (!name) return;
+        callbacks.onCustomEvent(
+          name.slice(0, MAX_BRIDGE_KEY_CHARS),
+          readBridgeProperties(payload.properties),
+        );
         return;
       }
       case 'arsel:button': {
@@ -451,6 +455,7 @@ function resizeSandbox(frame: HTMLIFrameElement, requested: unknown): void {
 interface BridgeMessage {
   type: string;
   event?: unknown;
+  properties?: unknown;
   buttonId?: unknown;
   submission?: unknown;
   height?: unknown;
@@ -462,6 +467,41 @@ function isBridgeMessage(value: unknown): value is BridgeMessage {
     value !== null &&
     typeof (value as { type?: unknown }).type === 'string'
   );
+}
+
+/**
+ * Properties on a frame-authored event, bounded and flattened.
+ *
+ * Unlike a submission — which is refused outright when malformed, because a half-read set of
+ * answers is worse than none — a bad property is simply dropped and the event still records. The
+ * event is the thing being reported; losing it because one value was an object would hide the
+ * interaction entirely.
+ *
+ * Nested values are not serialised. The queue posts these to an API that types properties as
+ * primitives, and quietly JSON-encoding an object would put a string where a number is expected in
+ * every segment that reads it.
+ */
+function readBridgeProperties(
+  value: unknown,
+): Record<string, string | number | boolean> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return {};
+  }
+
+  const properties: Record<string, string | number | boolean> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (Object.keys(properties).length >= MAX_BRIDGE_FIELDS) break;
+    if (!key || key.length > MAX_BRIDGE_KEY_CHARS) continue;
+
+    if (typeof raw === 'string') {
+      properties[key] = raw.slice(0, MAX_BRIDGE_VALUE_CHARS);
+    } else if (typeof raw === 'boolean') {
+      properties[key] = raw;
+    } else if (typeof raw === 'number' && Number.isFinite(raw)) {
+      properties[key] = raw;
+    }
+  }
+  return properties;
 }
 
 /**
