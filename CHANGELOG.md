@@ -5,6 +5,18 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 Breaking changes to the public surface wait for a major release, and are listed here explicitly.
 
+## [Unreleased]
+
+### Added
+
+- **Two in-app layouts: `HALF_INTERSTITIAL` and `ALERT`.** The first anchors the panel to
+  the lower half so the app stays partly visible; the second is the compact, centred,
+  text-only alert shape. Both behave as dialogs — backdrop, `role="dialog"`, focus trap —
+  and `ALERT` never renders an image even when the campaign carries one.
+
+  The API withholds both from any web build below 1.3.0, so an older SDK is never offered
+  a layout it cannot draw and nothing has to be released in lockstep.
+
 ## [1.2.0] — 2026-09-02
 
 ### Changed

@@ -449,4 +449,72 @@ describe('in-app renderer', () => {
     });
   });
 
+
+  describe('half-interstitial and alert', () => {
+    it.each(['HALF_INTERSTITIAL', 'ALERT'] as const)(
+      'renders %s as a dialog with a backdrop and a focus trap',
+      (layout) => {
+        // Both overlay the page, so they must behave as MODAL does — a banner's
+        // role="status" here would leave the message unannounced and untrapped.
+        const handle = render(message({ layout }), OPTIONS, callbacks());
+
+        const panel = handle.root.querySelector('.panel') as HTMLElement;
+        expect(panel.getAttribute('role')).toBe('dialog');
+        expect(panel.getAttribute('aria-modal')).toBe('true');
+        expect(handle.root.querySelector('.backdrop')).not.toBeNull();
+      },
+    );
+
+    it('tags the host with the layout so the stylesheet can place it', () => {
+      const handle = render(
+        message({ layout: 'HALF_INTERSTITIAL' }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      const host = document.querySelector('[data-arsel-inapp]');
+      expect(host?.getAttribute('data-layout')).toBe('HALF_INTERSTITIAL');
+      expect(handle.root.querySelector('.panel')).not.toBeNull();
+    });
+
+    it('never draws an image on ALERT, even when the campaign carries one', () => {
+      // ALERT is the OS-alert shape. A campaign switched to it from another
+      // layout keeps its imageUrl, and drawing it would break the form.
+      const handle = render(
+        message({
+          layout: 'ALERT',
+          content: {
+            headline: 'Headline',
+            body: 'Body',
+            showCloseButton: true,
+            imageUrl: 'https://example.com/a.png',
+          },
+        }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      expect(handle.root.querySelector('img')).toBeNull();
+      expect(handle.root.querySelector('.headline')?.textContent).toBe('Headline');
+    });
+
+    it('still draws an image on HALF_INTERSTITIAL', () => {
+      const handle = render(
+        message({
+          layout: 'HALF_INTERSTITIAL',
+          content: {
+            headline: 'Headline',
+            body: 'Body',
+            showCloseButton: true,
+            imageUrl: 'https://example.com/a.png',
+          },
+        }),
+        OPTIONS,
+        callbacks(),
+      );
+
+      expect(handle.root.querySelector('img')).not.toBeNull();
+    });
+  });
+
 });

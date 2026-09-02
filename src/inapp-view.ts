@@ -41,12 +41,23 @@ export interface ViewHandle {
   readonly root: ShadowRoot;
 }
 
+/**
+ * Layouts that overlay the page and therefore behave as dialogs: they get a
+ * backdrop, `role="dialog"`, and a focus trap. Banners deliberately do not —
+ * a strip at the edge of the page must never steal focus from a visitor who
+ * is mid-form. IMAGE_ONLY is centred but has no text to label a dialog with.
+ */
+const DIALOG_LAYOUTS: readonly string[] = ['MODAL', 'HALF_INTERSTITIAL', 'ALERT'];
+
+/** ALERT is the OS-alert shape: text and actions only, never an image. */
+const IMAGELESS_LAYOUTS: readonly string[] = ['ALERT'];
+
 export function render(
   message: InAppMessage,
   options: ViewOptions,
   callbacks: ViewCallbacks,
 ): ViewHandle {
-  const isModal = message.layout === 'MODAL';
+  const isModal = DIALOG_LAYOUTS.includes(message.layout);
   const shownAt = Date.now();
   const uid = `arsel-iam-${(idCounter += 1)}`;
 
@@ -110,7 +121,7 @@ export function render(
   if (message.layout === 'IMAGE_ONLY' && message.content.imageUrl) {
     panel.append(buildImageOnly(message, () => primaryAction(message)));
   } else {
-    if (message.content.imageUrl) {
+    if (message.content.imageUrl && !IMAGELESS_LAYOUTS.includes(message.layout)) {
       panel.append(buildFigure(message.content.imageUrl, message.content.headline));
     }
     const headline = document.createElement('h2');
@@ -479,6 +490,26 @@ const CSS_TEXT = `
 :host([data-layout="BANNER_BOTTOM"]) .panel {
   bottom: 16px;
   padding-bottom: calc(20px + env(safe-area-inset-bottom));
+}
+:host([data-layout="HALF_INTERSTITIAL"]) .panel {
+  inset-inline: 16px;
+  bottom: 0;
+  margin-inline: auto;
+  width: min(calc(100vw - 32px), 480px);
+  max-height: 60vh;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
+}
+:host([data-layout="ALERT"]) .panel {
+  inset-inline-start: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 64px), 320px);
+  text-align: center;
+}
+:host([dir="rtl"][data-layout="ALERT"]) .panel {
+  transform: translate(50%, -50%);
 }
 :host([data-layout="IMAGE_ONLY"]) .panel {
   inset-inline-start: 50%;
